@@ -1,0 +1,33 @@
+name: church_plant_toolkit
+description: A toolkit for church plants to manage ministry tools.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  shared_preferences: ^2.2.2
+  provider: ^6.1.1
+  google_fonts: ^6.1.0
+  intl: ^0.19.0
+  uuid: ^4.3.3
+  url_launcher: ^6.2.4
+  path_provider: ^2.1.2
+  image_picker: ^1.0.7
+  http: ^1.2.1
+  html: ^0.15.4          # HTML tag stripping for bolls.life verse text
+  file_picker: ^8.0.0   # Upload .docx and other files into notes
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/
+    - assets/scripts/          # export scripts (note_export.js, note_export.py)
