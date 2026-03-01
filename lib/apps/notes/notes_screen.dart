@@ -57,8 +57,6 @@ const topicalSubfolders = <String>[
   'Good Friday',
   'Palm Sunday',
   'Pentecost',
-  'Advent',
-  'Lent',
   'Thanksgiving',
   'New Year',
   "Mother's Day",
