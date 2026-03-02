@@ -18,8 +18,8 @@ dependencies:
   path_provider: ^2.1.2
   image_picker: ^1.0.7
   http: ^1.2.1
-  html: ^0.15.4          # HTML tag stripping for bolls.life verse text
-  file_picker: ^8.0.0   # Upload .docx and other files into notes
+  file_picker: ^8.0.0    # File import (.txt .md .docx) and save dialog for export
+  archive: ^3.6.1         # Pure Dart ZIP used to write .docx and read .docx imports
 
 dev_dependencies:
   flutter_test:
@@ -30,4 +30,3 @@ flutter:
   uses-material-design: true
   assets:
     - assets/images/
-    - assets/scripts/          # export scripts (note_export.js, note_export.py)

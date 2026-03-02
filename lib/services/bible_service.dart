@@ -1,168 +1,210 @@
 // lib/services/bible_service.dart
 //
-// Bible data powered by bolls.life — free, no API key, includes:
-// KJV, NKJV, ESV, NASB1995, NIV, NLT, CSB, BSB, ASV, YLT, WEB and 100+ more.
+// Powered by bolls.life (free, no API key required).
+// KJV, NKJV, ESV, NASB1995, NIV, NLT, CSB, BSB, ASV, WEB, YLT + 100 more.
 //
-// API reference: https://bolls.life/api/
-//   GET  https://bolls.life/static/bolls/app/views/languages.json   → translation list
-//   GET  https://bolls.life/get-books/{translation}/                → books
-//   GET  https://bolls.life/get-text/{translation}/{bookId}/{ch}/   → verses
-//   GET  https://bolls.life/v2/find/{translation}?search=…          → search
+// OFFLINE-FIRST: all 66 books + 15 popular translations are hardcoded and
+// available immediately — no network needed just to browse. Network is only
+// required to load verse text.
 
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
-import 'package:html/parser.dart' as html_parser;
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
-// ── MODELS ────────────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// MODELS
+// ══════════════════════════════════════════════════════════════════════════════
 
 class BibleTranslation {
-  final String id;          // e.g. "KJV", "NASB1995"
-  final String name;        // full name
-  final String shortName;   // abbreviation shown in UI
+  final String id;
+  final String name;
+  final String shortName;
   final String language;
   final String languageEnglishName;
-  final int    numberOfBooks;
-
   const BibleTranslation({
-    required this.id,
-    required this.name,
-    required this.shortName,
-    required this.language,
-    required this.languageEnglishName,
-    required this.numberOfBooks,
+    required this.id, required this.name, required this.shortName,
+    required this.language, required this.languageEnglishName,
   });
-
-  // bolls.life returns: { short_name, full_name, language, ... }
-  factory BibleTranslation.fromBollsJson(Map<String, dynamic> j) =>
+  factory BibleTranslation.fromJson(Map<String, dynamic> j) =>
       BibleTranslation(
-        id:                  j['short_name'] ?? '',
-        shortName:           j['short_name'] ?? '',
-        name:                j['full_name']  ?? j['short_name'] ?? '',
-        language:            j['language']   ?? 'en',
-        languageEnglishName: j['language']   ?? 'English',
-        numberOfBooks:       66,
+        id:                  ((j['short_name'] ?? '') as String).trim(),
+        shortName:           ((j['short_name'] ?? '') as String).trim(),
+        name:                ((j['full_name']  ?? j['short_name'] ?? '') as String).trim(),
+        language:            ((j['language']   ?? 'en') as String).trim(),
+        languageEnglishName: ((j['language']   ?? 'English') as String).trim(),
       );
-
-  @override
-  String toString() => '$shortName – $name';
+  @override String toString() => '$shortName – $name';
 }
 
 class BibleBook {
-  final int    bookId;      // bolls.life uses integer IDs 1–66 (+ apocrypha)
+  final int    bookId;
   final String name;
   final int    chapters;
   final bool   isOT;
-
-  const BibleBook({
-    required this.bookId,
-    required this.name,
-    required this.chapters,
-    required this.isOT,
-  });
-
+  const BibleBook({required this.bookId, required this.name, required this.chapters, required this.isOT});
   String get id => bookId.toString();
-
-  // bolls.life: { bookid, name, chapters }
-  factory BibleBook.fromBollsJson(Map<String, dynamic> j) {
-    final id = j['bookid'] as int? ?? 0;
-    return BibleBook(
-      bookId:   id,
-      name:     j['name'] ?? '',
-      chapters: j['chapters'] as int? ?? 1,
-      isOT:     id >= 1 && id <= 39,
-    );
+  factory BibleBook.fromJson(Map<String, dynamic> j) {
+    final id = (j['bookid'] as num?)?.toInt() ?? 0;
+    return BibleBook(bookId: id, name: ((j['name'] ?? '') as String).trim(),
+        chapters: (j['chapters'] as num?)?.toInt() ?? 1, isOT: id <= 39);
   }
 }
 
 class BibleVerse {
-  final int    number;
-  final String text;
+  final int number; final String text;
   const BibleVerse({required this.number, required this.text});
 }
 
 class BibleChapter {
-  final String        translationId;
-  final int           bookId;
-  final String        bookName;
-  final int           chapterNumber;
-  final List<BibleVerse> verses;
-
-  const BibleChapter({
-    required this.translationId,
-    required this.bookId,
-    required this.bookName,
-    required this.chapterNumber,
-    required this.verses,
-  });
+  final String translationId; final int bookId; final String bookName;
+  final int chapterNumber; final List<BibleVerse> verses;
+  const BibleChapter({required this.translationId, required this.bookId,
+      required this.bookName, required this.chapterNumber, required this.verses});
 }
 
 class VerseSearchResult {
-  final String bookName;
-  final int    bookId;
-  final int    chapter;
-  final int    verse;
-  final String text;
-  final String reference;
-
-  const VerseSearchResult({
-    required this.bookName,
-    required this.bookId,
-    required this.chapter,
-    required this.verse,
-    required this.text,
-    required this.reference,
-  });
+  final String bookName; final int bookId, chapter, verse;
+  final String text, reference;
+  const VerseSearchResult({required this.bookName, required this.bookId,
+      required this.chapter, required this.verse, required this.text, required this.reference});
 }
 
-// ── POPULAR TRANSLATIONS (shown first in picker) ──────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// HARDCODED FALLBACKS — always visible, no network needed
+// ══════════════════════════════════════════════════════════════════════════════
 
-const popularTranslationIds = <String>[
-  'KJV',       // King James Version
-  'NKJV',      // New King James Version
-  'ESV',        // English Standard Version
-  'NASB1995',  // New American Standard Bible 1995
-  'NIV',        // New International Version (if available)
-  'NLT',        // New Living Translation
-  'CSB',        // Christian Standard Bible
-  'BSB',        // Berean Standard Bible (fully free)
-  'ASV',        // American Standard Version
-  'WEB',        // World English Bible
-  'YLT',        // Young's Literal Translation
-  'DARBY',     // Darby Translation
+const _builtinTranslations = <BibleTranslation>[
+  BibleTranslation(id:'KJV',      shortName:'KJV',      name:'King James Version (1611)',           language:'en', languageEnglishName:'English'),
+  BibleTranslation(id:'NKJV',     shortName:'NKJV',     name:'New King James Version',              language:'en', languageEnglishName:'English'),
+  BibleTranslation(id:'ESV',      shortName:'ESV',      name:'English Standard Version',            language:'en', languageEnglishName:'English'),
+  BibleTranslation(id:'NASB1995', shortName:'NASB1995', name:'New American Standard Bible (1995)',   language:'en', languageEnglishName:'English'),
+  BibleTranslation(id:'NIV',      shortName:'NIV',      name:'New International Version',           language:'en', languageEnglishName:'English'),
+  BibleTranslation(id:'NLT',      shortName:'NLT',      name:'New Living Translation',              language:'en', languageEnglishName:'English'),
+  BibleTranslation(id:'CSB',      shortName:'CSB',      name:'Christian Standard Bible',            language:'en', languageEnglishName:'English'),
+  BibleTranslation(id:'BSB',      shortName:'BSB',      name:'Berean Standard Bible',               language:'en', languageEnglishName:'English'),
+  BibleTranslation(id:'ASV',      shortName:'ASV',      name:'American Standard Version (1901)',     language:'en', languageEnglishName:'English'),
+  BibleTranslation(id:'WEB',      shortName:'WEB',      name:'World English Bible',                 language:'en', languageEnglishName:'English'),
+  BibleTranslation(id:'YLT',      shortName:'YLT',      name:"Young's Literal Translation",         language:'en', languageEnglishName:'English'),
+  BibleTranslation(id:'DARBY',    shortName:'DARBY',    name:'Darby Translation',                   language:'en', languageEnglishName:'English'),
+  BibleTranslation(id:'HCSB',     shortName:'HCSB',     name:'Holman Christian Standard Bible',     language:'en', languageEnglishName:'English'),
+  BibleTranslation(id:'AMP',      shortName:'AMP',      name:'Amplified Bible',                     language:'en', languageEnglishName:'English'),
+  BibleTranslation(id:'MSG',      shortName:'MSG',      name:'The Message',                         language:'en', languageEnglishName:'English'),
 ];
 
-// ── SERVICE ───────────────────────────────────────────────────────────────────
+const popularTranslationIds = <String>[
+  'KJV','NKJV','ESV','NASB1995','NIV','NLT','CSB','BSB','ASV','WEB','YLT','DARBY','HCSB','AMP','MSG',
+];
+
+const _builtinBooks = <BibleBook>[
+  BibleBook(bookId: 1,  name:'Genesis',         chapters:50,  isOT:true),
+  BibleBook(bookId: 2,  name:'Exodus',           chapters:40,  isOT:true),
+  BibleBook(bookId: 3,  name:'Leviticus',        chapters:27,  isOT:true),
+  BibleBook(bookId: 4,  name:'Numbers',          chapters:36,  isOT:true),
+  BibleBook(bookId: 5,  name:'Deuteronomy',      chapters:34,  isOT:true),
+  BibleBook(bookId: 6,  name:'Joshua',           chapters:24,  isOT:true),
+  BibleBook(bookId: 7,  name:'Judges',           chapters:21,  isOT:true),
+  BibleBook(bookId: 8,  name:'Ruth',             chapters:4,   isOT:true),
+  BibleBook(bookId: 9,  name:'1 Samuel',         chapters:31,  isOT:true),
+  BibleBook(bookId: 10, name:'2 Samuel',         chapters:24,  isOT:true),
+  BibleBook(bookId: 11, name:'1 Kings',          chapters:22,  isOT:true),
+  BibleBook(bookId: 12, name:'2 Kings',          chapters:25,  isOT:true),
+  BibleBook(bookId: 13, name:'1 Chronicles',     chapters:29,  isOT:true),
+  BibleBook(bookId: 14, name:'2 Chronicles',     chapters:36,  isOT:true),
+  BibleBook(bookId: 15, name:'Ezra',             chapters:10,  isOT:true),
+  BibleBook(bookId: 16, name:'Nehemiah',         chapters:13,  isOT:true),
+  BibleBook(bookId: 17, name:'Esther',           chapters:10,  isOT:true),
+  BibleBook(bookId: 18, name:'Job',              chapters:42,  isOT:true),
+  BibleBook(bookId: 19, name:'Psalms',           chapters:150, isOT:true),
+  BibleBook(bookId: 20, name:'Proverbs',         chapters:31,  isOT:true),
+  BibleBook(bookId: 21, name:'Ecclesiastes',     chapters:12,  isOT:true),
+  BibleBook(bookId: 22, name:'Song of Solomon',  chapters:8,   isOT:true),
+  BibleBook(bookId: 23, name:'Isaiah',           chapters:66,  isOT:true),
+  BibleBook(bookId: 24, name:'Jeremiah',         chapters:52,  isOT:true),
+  BibleBook(bookId: 25, name:'Lamentations',     chapters:5,   isOT:true),
+  BibleBook(bookId: 26, name:'Ezekiel',          chapters:48,  isOT:true),
+  BibleBook(bookId: 27, name:'Daniel',           chapters:12,  isOT:true),
+  BibleBook(bookId: 28, name:'Hosea',            chapters:14,  isOT:true),
+  BibleBook(bookId: 29, name:'Joel',             chapters:3,   isOT:true),
+  BibleBook(bookId: 30, name:'Amos',             chapters:9,   isOT:true),
+  BibleBook(bookId: 31, name:'Obadiah',          chapters:1,   isOT:true),
+  BibleBook(bookId: 32, name:'Jonah',            chapters:4,   isOT:true),
+  BibleBook(bookId: 33, name:'Micah',            chapters:7,   isOT:true),
+  BibleBook(bookId: 34, name:'Nahum',            chapters:3,   isOT:true),
+  BibleBook(bookId: 35, name:'Habakkuk',         chapters:3,   isOT:true),
+  BibleBook(bookId: 36, name:'Zephaniah',        chapters:3,   isOT:true),
+  BibleBook(bookId: 37, name:'Haggai',           chapters:2,   isOT:true),
+  BibleBook(bookId: 38, name:'Zechariah',        chapters:14,  isOT:true),
+  BibleBook(bookId: 39, name:'Malachi',          chapters:4,   isOT:true),
+  BibleBook(bookId: 40, name:'Matthew',          chapters:28,  isOT:false),
+  BibleBook(bookId: 41, name:'Mark',             chapters:16,  isOT:false),
+  BibleBook(bookId: 42, name:'Luke',             chapters:24,  isOT:false),
+  BibleBook(bookId: 43, name:'John',             chapters:21,  isOT:false),
+  BibleBook(bookId: 44, name:'Acts',             chapters:28,  isOT:false),
+  BibleBook(bookId: 45, name:'Romans',           chapters:16,  isOT:false),
+  BibleBook(bookId: 46, name:'1 Corinthians',    chapters:16,  isOT:false),
+  BibleBook(bookId: 47, name:'2 Corinthians',    chapters:13,  isOT:false),
+  BibleBook(bookId: 48, name:'Galatians',        chapters:6,   isOT:false),
+  BibleBook(bookId: 49, name:'Ephesians',        chapters:6,   isOT:false),
+  BibleBook(bookId: 50, name:'Philippians',      chapters:4,   isOT:false),
+  BibleBook(bookId: 51, name:'Colossians',       chapters:4,   isOT:false),
+  BibleBook(bookId: 52, name:'1 Thessalonians',  chapters:5,   isOT:false),
+  BibleBook(bookId: 53, name:'2 Thessalonians',  chapters:3,   isOT:false),
+  BibleBook(bookId: 54, name:'1 Timothy',        chapters:6,   isOT:false),
+  BibleBook(bookId: 55, name:'2 Timothy',        chapters:4,   isOT:false),
+  BibleBook(bookId: 56, name:'Titus',            chapters:3,   isOT:false),
+  BibleBook(bookId: 57, name:'Philemon',         chapters:1,   isOT:false),
+  BibleBook(bookId: 58, name:'Hebrews',          chapters:13,  isOT:false),
+  BibleBook(bookId: 59, name:'James',            chapters:5,   isOT:false),
+  BibleBook(bookId: 60, name:'1 Peter',          chapters:5,   isOT:false),
+  BibleBook(bookId: 61, name:'2 Peter',          chapters:3,   isOT:false),
+  BibleBook(bookId: 62, name:'1 John',           chapters:5,   isOT:false),
+  BibleBook(bookId: 63, name:'2 John',           chapters:1,   isOT:false),
+  BibleBook(bookId: 64, name:'3 John',           chapters:1,   isOT:false),
+  BibleBook(bookId: 65, name:'Jude',             chapters:1,   isOT:false),
+  BibleBook(bookId: 66, name:'Revelation',       chapters:22,  isOT:false),
+];
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SERVICE
+// ══════════════════════════════════════════════════════════════════════════════
 
 class BibleService extends ChangeNotifier {
-  static const _base         = 'https://bolls.life';
-  static const _prefKey      = 'bible_translation_id';
-  static const _booksCache   = 'bible_books_cache_v2_';
+  static const _apiBase = 'https://bolls.life';
+  static const _prefKey = 'bible_translation_id_v3';
+  static const _timeout = Duration(seconds: 20);
 
   String _translationId = 'KJV';
   String get translationId => _translationId;
 
-  List<BibleTranslation> _availableTranslations = [];
-  List<BibleTranslation> get availableTranslations => _availableTranslations;
+  // Pre-loaded — always non-empty
+  List<BibleTranslation> _translations = List.of(_builtinTranslations);
+  List<BibleTranslation> get availableTranslations => _translations;
 
-  List<BibleBook> _books = [];
+  List<BibleBook> _books = List.of(_builtinBooks);
   List<BibleBook> get books => _books;
 
   bool _loadingBooks = false;
   bool get loadingBooks => _loadingBooks;
 
-  // In-memory chapter cache: "KJV/1/1" → BibleChapter
   final Map<String, BibleChapter> _chapterCache = {};
 
-  BibleService() {
-    _init();
-  }
+  BibleService() { _init(); }
+
+  // ── INIT ───────────────────────────────────────────────────────────────────
 
   Future<void> _init() async {
     final prefs = await SharedPreferences.getInstance();
     _translationId = prefs.getString(_prefKey) ?? 'KJV';
-    await _loadBooks();
+    notifyListeners(); // show built-in data immediately
+
+    // Restore cached book list if available (no network)
+    final cached = prefs.getString('bolls_books_$_translationId');
+    if (cached != null) _applyBooksJson(cached);
+
+    // Refresh in background — won't block UI
+    _bgFetchBooks();
+    _bgFetchTranslations();
   }
 
   // ── TRANSLATION ────────────────────────────────────────────────────────────
@@ -172,97 +214,94 @@ class BibleService extends ChangeNotifier {
     _translationId = id;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_prefKey, id);
-    _books = [];
+    _books = List.of(_builtinBooks); // reset to built-in while fetching
     _chapterCache.clear();
     notifyListeners();
-    await _loadBooks();
+
+    final cached = prefs.getString('bolls_books_$id');
+    if (cached != null) _applyBooksJson(cached);
+    _bgFetchBooks();
   }
 
   String get translationName {
-    try {
-      return _availableTranslations
-          .firstWhere((t) => t.id == _translationId)
-          .name;
-    } catch (_) {
-      return _translationId;
-    }
+    try { return _translations.firstWhere((t) => t.id == _translationId).name; }
+    catch (_) { return _translationId; }
   }
 
-  // ── TRANSLATIONS LIST ──────────────────────────────────────────────────────
-
   Future<List<BibleTranslation>> fetchTranslations() async {
-    if (_availableTranslations.isNotEmpty) return _availableTranslations;
-    try {
-      final res = await http
-          .get(Uri.parse(
-              '$_base/static/bolls/app/views/languages.json'))
-          .timeout(const Duration(seconds: 15));
-      if (res.statusCode == 200) {
-        final list = jsonDecode(res.body) as List;
-        _availableTranslations = list
-            .map((j) => BibleTranslation.fromBollsJson(j as Map<String, dynamic>))
-            .where((t) => t.id.isNotEmpty)
-            .toList();
-        // Sort: popular first, then alphabetically
-        _availableTranslations.sort((a, b) {
-          final aIdx = popularTranslationIds.indexOf(a.id);
-          final bIdx = popularTranslationIds.indexOf(b.id);
-          if (aIdx >= 0 && bIdx >= 0) return aIdx.compareTo(bIdx);
-          if (aIdx >= 0) return -1;
-          if (bIdx >= 0) return 1;
-          return a.id.compareTo(b.id);
-        });
-        notifyListeners();
-      }
-    } catch (e) {
-      debugPrint('BibleService: failed to load translations – $e');
-    }
-    return _availableTranslations;
+    _bgFetchTranslations();
+    return _translations; // returns immediately with built-in list
   }
 
   // ── BOOKS ──────────────────────────────────────────────────────────────────
 
-  Future<void> _loadBooks() async {
-    // Try cache first
-    final prefs   = await SharedPreferences.getInstance();
-    final cacheKey = '$_booksCache$_translationId';
-    final cached  = prefs.getString(cacheKey);
-    if (cached != null) {
-      try {
-        final list = jsonDecode(cached) as List;
-        _books = list
-            .map((j) => BibleBook.fromBollsJson(j as Map<String, dynamic>))
-            .toList();
-        notifyListeners();
-        return;
-      } catch (_) {}
-    }
+  Future<List<BibleBook>> getBooks() => Future.value(_books);
 
-    _loadingBooks = true;
-    notifyListeners();
-
+  void _applyBooksJson(String raw) {
     try {
-      final res = await http
-          .get(Uri.parse('$_base/get-books/$_translationId/'))
-          .timeout(const Duration(seconds: 15));
-      if (res.statusCode == 200) {
-        final list = jsonDecode(res.body) as List;
-        _books = list
-            .map((j) => BibleBook.fromBollsJson(j as Map<String, dynamic>))
-            .toList();
-        await prefs.setString(cacheKey, res.body);
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return;
+      final fetched = (decoded as List)
+          .whereType<Map<String, dynamic>>()
+          .map(BibleBook.fromJson)
+          .where((b) => b.bookId >= 1 && b.bookId <= 66)
+          .toList();
+      if (fetched.length >= 60) { // only replace if we got a full book list
+        _books = fetched;
+        notifyListeners();
       }
-    } catch (e) {
-      debugPrint('BibleService: failed to load books – $e');
-    }
-
-    _loadingBooks = false;
-    notifyListeners();
+    } catch (_) {}
   }
 
-  Future<List<BibleBook>> getBooks() async {
-    if (_books.isEmpty) await _loadBooks();
-    return _books;
+  void _bgFetchBooks() async {
+    if (_loadingBooks) return;
+    _loadingBooks = true;
+    try {
+      final res = await http
+          .get(Uri.parse('$_apiBase/get-books/$_translationId/'))
+          .timeout(_timeout);
+      if (res.statusCode == 200 && res.body.isNotEmpty) {
+        _applyBooksJson(res.body);
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('bolls_books_$_translationId', res.body);
+      }
+    } catch (e) {
+      debugPrint('BibleService: books fetch failed — $e (built-in list in use)');
+    }
+    _loadingBooks = false;
+  }
+
+  void _bgFetchTranslations() async {
+    try {
+      final res = await http
+          .get(Uri.parse('$_apiBase/static/bolls/app/views/languages.json'))
+          .timeout(_timeout);
+      if (res.statusCode != 200 || res.body.isEmpty) return;
+
+      final decoded = jsonDecode(res.body);
+      if (decoded is! List) return;
+
+      final fetched = (decoded as List)
+          .whereType<Map<String, dynamic>>()
+          .map(BibleTranslation.fromJson)
+          .where((t) => t.id.isNotEmpty)
+          .toList();
+      if (fetched.isEmpty) return;
+
+      fetched.sort((a, b) {
+        final ai = popularTranslationIds.indexOf(a.id);
+        final bi = popularTranslationIds.indexOf(b.id);
+        if (ai >= 0 && bi >= 0) return ai.compareTo(bi);
+        if (ai >= 0) return -1;
+        if (bi >= 0) return 1;
+        return a.id.compareTo(b.id);
+      });
+
+      _translations = fetched;
+      notifyListeners();
+    } catch (e) {
+      debugPrint('BibleService: translations fetch failed — $e (built-in list in use)');
+    }
   }
 
   // ── CHAPTER ────────────────────────────────────────────────────────────────
@@ -273,26 +312,28 @@ class BibleService extends ChangeNotifier {
 
     try {
       final res = await http
-          .get(Uri.parse('$_base/get-text/$_translationId/$bookId/$chapter/'))
-          .timeout(const Duration(seconds: 15));
-      if (res.statusCode != 200) return null;
+          .get(Uri.parse('$_apiBase/get-text/$_translationId/$bookId/$chapter/'))
+          .timeout(_timeout);
+      if (res.statusCode != 200 || res.body.isEmpty) return null;
 
-      final list = jsonDecode(res.body) as List;
-      final bookName = _books.firstWhere(
-        (b) => b.bookId == bookId,
-        orElse: () => BibleBook(
-            bookId: bookId, name: 'Book $bookId',
-            chapters: 1, isOT: bookId <= 39),
-      ).name;
+      final decoded = jsonDecode(res.body);
+      if (decoded is! List || (decoded as List).isEmpty) return null;
 
-      final verses = list.map((j) {
-        // bolls.life returns HTML in `text` — strip tags for plain text
-        final raw = (j['text'] as String? ?? '');
-        return BibleVerse(
-          number: j['verse'] as int? ?? 0,
-          text:   _stripHtml(raw),
-        );
-      }).where((v) => v.text.isNotEmpty).toList();
+      final bookName = _books
+          .where((b) => b.bookId == bookId)
+          .map((b) => b.name)
+          .firstOrNull ?? 'Book $bookId';
+
+      final verses = (decoded as List)
+          .whereType<Map<String, dynamic>>()
+          .map((m) => BibleVerse(
+                number: (m['verse'] as num?)?.toInt() ?? 0,
+                text:   _stripHtml((m['text'] as String?) ?? ''),
+              ))
+          .where((v) => v.number > 0 && v.text.isNotEmpty)
+          .toList();
+
+      if (verses.isEmpty) return null;
 
       final result = BibleChapter(
         translationId: _translationId,
@@ -304,96 +345,74 @@ class BibleService extends ChangeNotifier {
       _chapterCache[key] = result;
       return result;
     } catch (e) {
-      debugPrint('BibleService: failed to load $bookId:$chapter – $e');
+      debugPrint('BibleService: chapter $bookId:$chapter failed — $e');
       return null;
     }
   }
 
-  // ── VERSE RANGE FETCH (for ScriptureField & note import) ──────────────────
+  // ── VERSE TEXT for ScriptureField ─────────────────────────────────────────
 
-  /// Returns formatted verse text: "[v] text ... — Ref (TRANS)"
   Future<String?> fetchVerseText({
-    required int    bookId,
-    required int    chapter,
-    required int    verseStart,
-    required int    verseEnd,
+    required int bookId, required int chapter,
+    required int verseStart, required int verseEnd,
     required String bookName,
   }) async {
     final ch = await getChapter(bookId, chapter);
-    if (ch == null) return null;
-
-    final verses = ch.verses
-        .where((v) => v.number >= verseStart && v.number <= verseEnd)
-        .toList();
+    if (ch == null || ch.verses.isEmpty) return null;
+    final verses = ch.verses.where((v) => v.number >= verseStart && v.number <= verseEnd).toList();
     if (verses.isEmpty) return null;
-
     final text = verses.length == 1
         ? verses.first.text
         : verses.map((v) => '[${v.number}] ${v.text}').join(' ');
-
     final ref = verseStart == verseEnd
         ? '$bookName $chapter:$verseStart'
-        : '$bookName $chapter:$verseStart–$verseEnd';
-
-    return '"$text"\n— $ref ($_translationId)';
+        : '$bookName $chapter:$verseStart\u2013$verseEnd';
+    return '"$text"\n\u2014 $ref ($_translationId)';
   }
 
   // ── SEARCH ─────────────────────────────────────────────────────────────────
 
-  Future<List<VerseSearchResult>> searchVerses(String query,
-      {int limit = 30}) async {
+  Future<List<VerseSearchResult>> searchVerses(String query, {int limit = 30}) async {
     if (query.trim().isEmpty) return [];
     try {
       final uri = Uri.parse(
-          '$_base/v2/find/$_translationId'
-          '?search=${Uri.encodeComponent(query)}'
-          '&match_case=false&match_whole=false&limit=$limit&page=1');
-      final res = await http.get(uri).timeout(const Duration(seconds: 15));
-      if (res.statusCode != 200) return [];
-
-      final body = jsonDecode(res.body) as Map<String, dynamic>;
-      final results = body['results'] as List? ?? [];
-
-      return results.map((j) {
-        final bookId  = j['book'] as int? ?? 0;
-        final bookName = _books.firstWhere(
-          (b) => b.bookId == bookId,
-          orElse: () => BibleBook(
-              bookId: bookId, name: 'Book $bookId',
-              chapters: 1, isOT: bookId <= 39),
-        ).name;
-        final ch = j['chapter'] as int? ?? 0;
-        final v  = j['verse']   as int? ?? 0;
+        '$_apiBase/v2/find/$_translationId'
+        '?search=${Uri.encodeComponent(query.trim())}'
+        '&match_case=false&match_whole=false&limit=$limit&page=1',
+      );
+      final res = await http.get(uri).timeout(_timeout);
+      if (res.statusCode != 200 || res.body.isEmpty) return [];
+      final body    = jsonDecode(res.body) as Map<String, dynamic>;
+      final results = (body['results'] as List?) ?? [];
+      return results.whereType<Map<String, dynamic>>().map((m) {
+        final bId  = (m['book']    as num?)?.toInt() ?? 0;
+        final ch   = (m['chapter'] as num?)?.toInt() ?? 0;
+        final v    = (m['verse']   as num?)?.toInt() ?? 0;
+        final name = _books.where((b) => b.bookId == bId).map((b) => b.name).firstOrNull ?? 'Book $bId';
         return VerseSearchResult(
-          bookId:    bookId,
-          bookName:  bookName,
-          chapter:   ch,
-          verse:     v,
-          text:      _stripHtml(j['text'] as String? ?? ''),
-          reference: '$bookName $ch:$v',
+          bookId: bId, bookName: name, chapter: ch, verse: v,
+          text: _stripHtml((m['text'] as String?) ?? ''), reference: '$name $ch:$v',
         );
       }).toList();
     } catch (e) {
-      debugPrint('BibleService: search failed – $e');
+      debugPrint('BibleService: search failed — $e');
       return [];
     }
   }
 
-  // ── UTIL ───────────────────────────────────────────────────────────────────
+  // ── HTML STRIP (pure Dart, zero external packages) ────────────────────────
 
-  static String _stripHtml(String html) {
-    try {
-      return html_parser.parse(html).documentElement?.text ?? html;
-    } catch (_) {
-      // Fallback: simple regex strip
-      return html
-          .replaceAll(RegExp(r'<[^>]+>'), '')
-          .replaceAll('&nbsp;', ' ')
-          .replaceAll('&amp;', '&')
-          .replaceAll('&lt;', '<')
-          .replaceAll('&gt;', '>')
-          .replaceAll('&quot;', '"')
-          .trim();
-    }
-  }
+  static String _stripHtml(String input) => input
+      .replaceAll(RegExp(r'<sup[^>]*>.*?</sup>', dotAll: true, caseSensitive: false), '')
+      .replaceAll(RegExp(r'<[^>]+>'), '')
+      .replaceAll('&nbsp;',  ' ')
+      .replaceAll('&#160;',  ' ')
+      .replaceAll('&amp;',   '&')
+      .replaceAll('&lt;',    '<')
+      .replaceAll('&gt;',    '>')
+      .replaceAll('&quot;',  '"')
+      .replaceAll('&#39;',   "'")
+      .replaceAll('&apos;',  "'")
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
 }
