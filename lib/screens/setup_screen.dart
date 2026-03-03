@@ -1071,6 +1071,7 @@ class _AppCheckTile extends StatelessWidget {
     'bible':        Icons.menu_book_outlined,
     'website':      Icons.web_outlined,
     'presentation': Icons.present_to_all_outlined,
+    'media_toolkit': Icons.palette_outlined,
   };
 
   @override

@@ -196,4 +196,11 @@ const List<AppDefinition> availableApps = [
     iconPath: 'present_to_all',
     category: 'Worship',
   ),
+  AppDefinition(
+    id: 'media_toolkit',
+    title: 'Media Toolkit',
+    description: 'Generate branded social media graphics, export your color palette, and convert images with your logo.',
+    iconPath: 'palette',
+    category: 'Branding',
+),
 ];

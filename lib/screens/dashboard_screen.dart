@@ -11,6 +11,7 @@ import '../apps/website/website_screen.dart';
 import '../apps/presentation/presentation_screen.dart';
 import '../services/bible_service.dart';
 import 'setup_screen.dart';
+import '../apps/media_toolkit/media_toolkit_screen.dart';
 
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key});
@@ -22,6 +23,7 @@ class DashboardScreen extends StatelessWidget {
       case 'bible':       screen = const BibleScreen(); break;
       case 'website':     screen = const WebsiteScreen(); break;
       case 'presentation':screen = const PresentationScreen(); break;
+      case 'media_toolkit':screen = const MediaToolkitScreen(); break;
       default: return;
     }
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen));

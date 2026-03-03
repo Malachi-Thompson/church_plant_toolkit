@@ -9,6 +9,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+
+  # Core
   shared_preferences: ^2.2.2
   provider: ^6.1.1
   google_fonts: ^6.1.0
@@ -18,8 +20,34 @@ dependencies:
   path_provider: ^2.1.2
   image_picker: ^1.0.7
   http: ^1.2.1
-  file_picker: ^8.0.0    # File import (.txt .md .docx) and save dialog for export
-  archive: ^3.6.1         # Pure Dart ZIP used to write .docx and read .docx imports
+  file_picker: ^8.0.0
+  archive: ^3.6.1
+
+  # ── NEW: Recording & Streaming ──────────────────────────────────────────────
+  #
+  # ffmpeg_kit_flutter_full_gpl bundles a full FFmpeg build with all codecs
+  # (H.264, AAC, etc.) needed for MP4 recording and RTMP streaming.
+  # It wraps FFmpeg as a native plugin so no system ffmpeg is required.
+  #
+  # IMPORTANT: Add the following to your platform configs:
+  #
+  #   Android → android/app/build.gradle:
+  #     minSdkVersion 24
+  #     abiFilters "arm64-v8a", "x86_64"
+  #
+  #   iOS → ios/Podfile:
+  #     platform :ios, '12.4'
+  #
+  #   macOS → macos/Podfile:
+  #     platform :osx, '10.15'
+  #
+  # The full-gpl variant supports librtmp (needed for RTMP streaming).
+  ffmpeg_kit_flutter_full_gpl: ^6.0.3
+
+  # screen_recorder captures the Flutter widget tree as video frames.
+  # Used as the video source piped into ffmpeg for recording/streaming.
+  # Repository: https://pub.dev/packages/screen_recorder
+  screen_recorder: ^0.3.0
 
 dev_dependencies:
   flutter_test:
