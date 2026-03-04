@@ -1,22 +1,21 @@
 // lib/apps/website/website_models.dart
 
 // ── BLOCK TYPES ───────────────────────────────────────────────────────────────
-// Each block is a section of a page with a specific layout and content.
 
 enum BlockType {
-  hero,           // Large banner with title, subtitle, CTA button
-  about,          // Text + optional image
-  services,       // Service time and location cards
-  events,         // Upcoming events list
-  team,           // Staff grid
-  sermon,         // Embedded sermon notes / scripture
-  contact,        // Contact form + info
-  map,            // Embedded map (Google, Apple, OpenStreetMap)
-  gallery,        // Image grid (paths)
-  announcement,   // Highlighted callout box
-  divider,        // Visual spacer/divider
-  richText,       // Free-form HTML/text block
-  cta,            // Call-to-action band
+  hero,
+  about,
+  services,
+  events,
+  team,
+  sermon,
+  contact,
+  map,
+  gallery,
+  announcement,
+  divider,
+  richText,
+  cta,
 }
 
 const blockTypeLabels = <BlockType, String>{
@@ -39,12 +38,13 @@ const blockTypeLabels = <BlockType, String>{
 enum MapProvider { google, apple, openStreetMap }
 
 const mapProviderLabels = <MapProvider, String>{
-  MapProvider.google:       'Google Maps',
-  MapProvider.apple:        'Apple Maps',
-  MapProvider.openStreetMap:'OpenStreetMap (free, no API key)',
+  MapProvider.google:        'Google Maps',
+  MapProvider.apple:         'Apple Maps',
+  MapProvider.openStreetMap: 'OpenStreetMap (free, no API key)',
 };
 
 // ── BLOCK ─────────────────────────────────────────────────────────────────────
+
 class WebBlock {
   String id;
   BlockType type;
@@ -53,10 +53,10 @@ class WebBlock {
   // Common fields
   String heading;
   String subheading;
-  String body;           // rich text / description
+  String body;
   String buttonText;
   String buttonUrl;
-  String imageUrl;       // local path or web URL
+  String imageUrl;
 
   // Services block
   List<ServiceTime> serviceTimes;
@@ -72,13 +72,13 @@ class WebBlock {
   String mapAddress;
   double mapLat;
   double mapLng;
-  String mapZoom;        // e.g. "15"
+  String mapZoom;
 
   // Gallery
   List<String> galleryImages;
 
   // Divider style
-  String dividerStyle;   // 'line', 'wave', 'cross'
+  String dividerStyle; // 'line', 'wave', 'cross'
 
   // Announcement
   String announcementColor; // hex
@@ -86,28 +86,28 @@ class WebBlock {
   WebBlock({
     required this.id,
     required this.type,
-    this.isVisible       = true,
-    this.heading         = '',
-    this.subheading      = '',
-    this.body            = '',
-    this.buttonText      = '',
-    this.buttonUrl       = '',
-    this.imageUrl        = '',
-    List<ServiceTime>?  serviceTimes,
-    List<WebEvent>?     events,
-    List<WebTeamMember>?team,
-    this.mapProvider     = MapProvider.openStreetMap,
-    this.mapAddress      = '',
-    this.mapLat          = 0,
-    this.mapLng          = 0,
-    this.mapZoom         = '15',
-    List<String>?       galleryImages,
-    this.dividerStyle    = 'line',
+    this.isVisible        = true,
+    this.heading          = '',
+    this.subheading       = '',
+    this.body             = '',
+    this.buttonText       = '',
+    this.buttonUrl        = '',
+    this.imageUrl         = '',
+    List<ServiceTime>?   serviceTimes,
+    List<WebEvent>?      events,
+    List<WebTeamMember>? team,
+    this.mapProvider      = MapProvider.openStreetMap,
+    this.mapAddress       = '',
+    this.mapLat           = 0,
+    this.mapLng           = 0,
+    this.mapZoom          = '15',
+    List<String>?        galleryImages,
+    this.dividerStyle     = 'line',
     this.announcementColor = '#1A3A5C',
-  })  : serviceTimes   = serviceTimes  ?? [],
-        events         = events         ?? [],
-        team           = team           ?? [],
-        galleryImages  = galleryImages  ?? [];
+  })  : serviceTimes  = serviceTimes  ?? [],
+        events        = events        ?? [],
+        team          = team          ?? [],
+        galleryImages = galleryImages ?? [];
 
   Map<String, dynamic> toJson() => {
     'id': id, 'type': type.name, 'isVisible': isVisible,
@@ -127,18 +127,18 @@ class WebBlock {
     id:        j['id'] ?? '',
     type:      BlockType.values.firstWhere(
         (t) => t.name == j['type'], orElse: () => BlockType.richText),
-    isVisible:   j['isVisible'] ?? true,
-    heading:     j['heading']   ?? '',
-    subheading:  j['subheading']?? '',
-    body:        j['body']      ?? '',
-    buttonText:  j['buttonText']?? '',
-    buttonUrl:   j['buttonUrl'] ?? '',
-    imageUrl:    j['imageUrl']  ?? '',
+    isVisible:   j['isVisible']  ?? true,
+    heading:     j['heading']    ?? '',
+    subheading:  j['subheading'] ?? '',
+    body:        j['body']       ?? '',
+    buttonText:  j['buttonText'] ?? '',
+    buttonUrl:   j['buttonUrl']  ?? '',
+    imageUrl:    j['imageUrl']   ?? '',
     serviceTimes: (j['serviceTimes'] as List? ?? [])
         .map((e) => ServiceTime.fromJson(e)).toList(),
     events: (j['events'] as List? ?? [])
         .map((e) => WebEvent.fromJson(e)).toList(),
-    team:   (j['team'] as List? ?? [])
+    team: (j['team'] as List? ?? [])
         .map((e) => WebTeamMember.fromJson(e)).toList(),
     mapProvider: MapProvider.values.firstWhere(
         (p) => p.name == j['mapProvider'],
@@ -148,8 +148,8 @@ class WebBlock {
     mapLng:     (j['mapLng']   ?? 0).toDouble(),
     mapZoom:    j['mapZoom']   ?? '15',
     galleryImages: List<String>.from(j['galleryImages'] ?? []),
-    dividerStyle:      j['dividerStyle']      ?? 'line',
-    announcementColor: j['announcementColor'] ?? '#1A3A5C',
+    dividerStyle:       j['dividerStyle']      ?? 'line',
+    announcementColor:  j['announcementColor'] ?? '#1A3A5C',
   );
 
   WebBlock copyWith({
@@ -163,26 +163,26 @@ class WebBlock {
     List<String>? galleryImages, String? dividerStyle,
     String? announcementColor,
   }) => WebBlock(
-    id:               id               ?? this.id,
-    type:             type             ?? this.type,
-    isVisible:        isVisible        ?? this.isVisible,
-    heading:          heading          ?? this.heading,
-    subheading:       subheading       ?? this.subheading,
-    body:             body             ?? this.body,
-    buttonText:       buttonText       ?? this.buttonText,
-    buttonUrl:        buttonUrl        ?? this.buttonUrl,
-    imageUrl:         imageUrl         ?? this.imageUrl,
-    serviceTimes:     serviceTimes     ?? this.serviceTimes,
-    events:           events           ?? this.events,
-    team:             team             ?? this.team,
-    mapProvider:      mapProvider      ?? this.mapProvider,
-    mapAddress:       mapAddress       ?? this.mapAddress,
-    mapLat:           mapLat           ?? this.mapLat,
-    mapLng:           mapLng           ?? this.mapLng,
-    mapZoom:          mapZoom          ?? this.mapZoom,
-    galleryImages:    galleryImages    ?? this.galleryImages,
-    dividerStyle:     dividerStyle     ?? this.dividerStyle,
-    announcementColor:announcementColor?? this.announcementColor,
+    id:                id                ?? this.id,
+    type:              type              ?? this.type,
+    isVisible:         isVisible         ?? this.isVisible,
+    heading:           heading           ?? this.heading,
+    subheading:        subheading        ?? this.subheading,
+    body:              body              ?? this.body,
+    buttonText:        buttonText        ?? this.buttonText,
+    buttonUrl:         buttonUrl         ?? this.buttonUrl,
+    imageUrl:          imageUrl          ?? this.imageUrl,
+    serviceTimes:      serviceTimes      ?? this.serviceTimes,
+    events:            events            ?? this.events,
+    team:              team              ?? this.team,
+    mapProvider:       mapProvider       ?? this.mapProvider,
+    mapAddress:        mapAddress        ?? this.mapAddress,
+    mapLat:            mapLat            ?? this.mapLat,
+    mapLng:            mapLng            ?? this.mapLng,
+    mapZoom:           mapZoom           ?? this.mapZoom,
+    galleryImages:     galleryImages     ?? this.galleryImages,
+    dividerStyle:      dividerStyle      ?? this.dividerStyle,
+    announcementColor: announcementColor ?? this.announcementColor,
   );
 }
 
@@ -196,7 +196,7 @@ class ServiceTime {
   Map<String, dynamic> toJson() =>
       {'day': day, 'time': time, 'location': location};
   factory ServiceTime.fromJson(Map<String, dynamic> j) =>
-      ServiceTime(day: j['day']??'', time: j['time']??'', location: j['location']??'');
+      ServiceTime(day: j['day'] ?? '', time: j['time'] ?? '', location: j['location'] ?? '');
 }
 
 class WebEvent {
@@ -204,12 +204,12 @@ class WebEvent {
   String date;
   String time;
   String description;
-  WebEvent({required this.title, this.date='', this.time='', this.description=''});
+  WebEvent({required this.title, this.date = '', this.time = '', this.description = ''});
   Map<String, dynamic> toJson() =>
       {'title': title, 'date': date, 'time': time, 'description': description};
   factory WebEvent.fromJson(Map<String, dynamic> j) => WebEvent(
-      title: j['title']??'', date: j['date']??'',
-      time: j['time']??'', description: j['description']??'');
+      title: j['title'] ?? '', date: j['date'] ?? '',
+      time: j['time'] ?? '', description: j['description'] ?? '');
 }
 
 class WebTeamMember {
@@ -217,12 +217,12 @@ class WebTeamMember {
   String role;
   String bio;
   String photoUrl;
-  WebTeamMember({required this.name, this.role='', this.bio='', this.photoUrl=''});
+  WebTeamMember({required this.name, this.role = '', this.bio = '', this.photoUrl = ''});
   Map<String, dynamic> toJson() =>
       {'name': name, 'role': role, 'bio': bio, 'photoUrl': photoUrl};
   factory WebTeamMember.fromJson(Map<String, dynamic> j) => WebTeamMember(
-      name: j['name']??'', role: j['role']??'',
-      bio: j['bio']??'', photoUrl: j['photoUrl']??'');
+      name: j['name'] ?? '', role: j['role'] ?? '',
+      bio: j['bio'] ?? '', photoUrl: j['photoUrl'] ?? '');
 }
 
 // ── PAGE ──────────────────────────────────────────────────────────────────────
@@ -230,7 +230,7 @@ class WebTeamMember {
 class WebPage {
   String id;
   String title;
-  String slug;       // URL-safe name, e.g. "about-us"
+  String slug;
   bool isHomePage;
   bool showInNav;
   List<WebBlock> blocks;
@@ -239,8 +239,8 @@ class WebPage {
     required this.id,
     required this.title,
     required this.slug,
-    this.isHomePage  = false,
-    this.showInNav   = true,
+    this.isHomePage = false,
+    this.showInNav  = true,
     List<WebBlock>? blocks,
   }) : blocks = blocks ?? [];
 
@@ -263,25 +263,27 @@ class WebPage {
 
 // ── SITE SETTINGS ─────────────────────────────────────────────────────────────
 
-class NavStyle { static const topbar = 'topbar'; static const sidebar = 'sidebar'; }
+class NavStyle {
+  static const topbar  = 'topbar';
+  static const sidebar = 'sidebar';
+}
 
 class WebsiteSettings {
   String siteTitle;
   String tagline;
   String faviconPath;
-  String fontFamily;        // e.g. 'Inter', 'Playfair Display'
+  String fontFamily;
   String primaryHex;
   String secondaryHex;
   String backgroundHex;
   String textHex;
-  String navStyle;          // 'topbar' | 'sidebar'
+  String navStyle;
   bool   footerShowSocial;
   String facebookUrl;
   String instagramUrl;
   String youtubeUrl;
   String twitterUrl;
   String footerText;
-  // Deploy
   DeploySettings deploy;
 
   WebsiteSettings({
@@ -317,21 +319,21 @@ class WebsiteSettings {
   };
 
   factory WebsiteSettings.fromJson(Map<String, dynamic> j) => WebsiteSettings(
-    siteTitle:        j['siteTitle']       ?? '',
-    tagline:          j['tagline']         ?? '',
-    faviconPath:      j['faviconPath']     ?? '',
-    fontFamily:       j['fontFamily']      ?? 'Inter',
-    primaryHex:       j['primaryHex']      ?? '#1A3A5C',
-    secondaryHex:     j['secondaryHex']    ?? '#D4A843',
-    backgroundHex:    j['backgroundHex']   ?? '#FFFFFF',
-    textHex:          j['textHex']         ?? '#1C1C2E',
-    navStyle:         j['navStyle']        ?? NavStyle.topbar,
-    footerShowSocial: j['footerShowSocial']?? true,
-    facebookUrl:      j['facebookUrl']     ?? '',
-    instagramUrl:     j['instagramUrl']    ?? '',
-    youtubeUrl:       j['youtubeUrl']      ?? '',
-    twitterUrl:       j['twitterUrl']      ?? '',
-    footerText:       j['footerText']      ?? '',
+    siteTitle:        j['siteTitle']        ?? '',
+    tagline:          j['tagline']          ?? '',
+    faviconPath:      j['faviconPath']      ?? '',
+    fontFamily:       j['fontFamily']       ?? 'Inter',
+    primaryHex:       j['primaryHex']       ?? '#1A3A5C',
+    secondaryHex:     j['secondaryHex']     ?? '#D4A843',
+    backgroundHex:    j['backgroundHex']    ?? '#FFFFFF',
+    textHex:          j['textHex']          ?? '#1C1C2E',
+    navStyle:         j['navStyle']         ?? NavStyle.topbar,
+    footerShowSocial: j['footerShowSocial'] ?? true,
+    facebookUrl:      j['facebookUrl']      ?? '',
+    instagramUrl:     j['instagramUrl']     ?? '',
+    youtubeUrl:       j['youtubeUrl']       ?? '',
+    twitterUrl:       j['twitterUrl']       ?? '',
+    footerText:       j['footerText']       ?? '',
     deploy: j['deploy'] != null
         ? DeploySettings.fromJson(j['deploy']) : DeploySettings(),
   );
@@ -339,41 +341,134 @@ class WebsiteSettings {
 
 // ── DEPLOY SETTINGS ───────────────────────────────────────────────────────────
 
+/// Which hosting platform to publish to
+enum HostingPlatform { githubPages, cloudflarePages }
+
+/// Where the domain was purchased
+enum DomainRegistrar { none, namecheap, cloudflare, other }
+
+/// Runtime deployment status (not persisted)
+enum DeployStatus { idle, deploying, success, failed }
+
 class DeploySettings {
-  // GitHub Pages
+  // ── Platform ──────────────────────────────────────────────────────────────
+  HostingPlatform hostingPlatform;
+
+  // ── GitHub Pages ──────────────────────────────────────────────────────────
   bool   githubPagesEnabled;
-  String githubRepo;        // e.g. 'myusername/mychurch'
-  String githubBranch;      // typically 'gh-pages'
-  // Cloudflare Pages
+  /// Personal Access Token — stored only in SharedPreferences, never exported
+  String githubToken;
+  /// Auto-fetched from token on first verify
+  String githubUsername;
+  /// Just the repo name, e.g. 'my-church-site' (app creates it if needed)
+  String githubRepo;
+  String githubBranch;
+  /// Populated automatically after a successful deploy
+  String githubPagesUrl;
+
+  // ── Cloudflare Pages ──────────────────────────────────────────────────────
   bool   cloudflareEnabled;
-  String cloudflareProject; // Cloudflare project name
-  // Custom domain
-  String customDomain;
+  /// CF API Token — needs Cloudflare Pages:Edit (+ Zone:DNS:Edit for domains)
+  String cloudflareApiToken;
+  /// CF Account ID from the right sidebar of dash.cloudflare.com
+  String cloudflareAccountId;
+  /// Project name — created automatically if it doesn't exist
+  String cloudflareProject;
+  /// Populated automatically after a successful deploy
+  String cloudflarePagesUrl;
+
+  // ── Custom Domain ─────────────────────────────────────────────────────────
+  String customDomain;           // e.g. 'mychurch.org'
+  DomainRegistrar domainRegistrar;
+  /// CF Zone ID — auto-fetched when registrar == cloudflare
+  String cloudflareZoneId;
+
+  // ── Runtime (not persisted to JSON) ───────────────────────────────────────
+  DeployStatus deployStatus;
+  String deployMessage;
 
   DeploySettings({
-    this.githubPagesEnabled = false,
-    this.githubRepo         = '',
-    this.githubBranch       = 'gh-pages',
-    this.cloudflareEnabled  = false,
-    this.cloudflareProject  = '',
-    this.customDomain       = '',
+    this.hostingPlatform     = HostingPlatform.githubPages,
+    this.githubPagesEnabled  = false,
+    this.githubToken         = '',
+    this.githubUsername      = '',
+    this.githubRepo          = '',
+    this.githubBranch        = 'gh-pages',
+    this.githubPagesUrl      = '',
+    this.cloudflareEnabled   = false,
+    this.cloudflareApiToken  = '',
+    this.cloudflareAccountId = '',
+    this.cloudflareProject   = '',
+    this.cloudflarePagesUrl  = '',
+    this.customDomain        = '',
+    this.domainRegistrar     = DomainRegistrar.none,
+    this.cloudflareZoneId    = '',
+    this.deployStatus        = DeployStatus.idle,
+    this.deployMessage       = '',
   });
 
+  /// The public URL of the live site (custom domain takes priority)
+  String get liveUrl {
+    if (customDomain.isNotEmpty) return 'https://$customDomain';
+    if (hostingPlatform == HostingPlatform.githubPages &&
+        githubPagesUrl.isNotEmpty) return githubPagesUrl;
+    if (hostingPlatform == HostingPlatform.cloudflarePages &&
+        cloudflarePagesUrl.isNotEmpty) return cloudflarePagesUrl;
+    return '';
+  }
+
+  /// The CNAME target for manual DNS configuration
+  String get cnameTarget {
+    if (hostingPlatform == HostingPlatform.githubPages &&
+        githubUsername.isNotEmpty) {
+      return '$githubUsername.github.io';
+    }
+    if (hostingPlatform == HostingPlatform.cloudflarePages &&
+        cloudflareProject.isNotEmpty) {
+      return '$cloudflareProject.pages.dev';
+    }
+    return '';
+  }
+
   Map<String, dynamic> toJson() => {
-    'githubPagesEnabled': githubPagesEnabled, 'githubRepo': githubRepo,
-    'githubBranch': githubBranch,
-    'cloudflareEnabled': cloudflareEnabled,
-    'cloudflareProject': cloudflareProject,
-    'customDomain': customDomain,
+    'hostingPlatform':     hostingPlatform.name,
+    'githubPagesEnabled':  githubPagesEnabled,
+    'githubToken':         githubToken,
+    'githubUsername':      githubUsername,
+    'githubRepo':          githubRepo,
+    'githubBranch':        githubBranch,
+    'githubPagesUrl':      githubPagesUrl,
+    'cloudflareEnabled':   cloudflareEnabled,
+    'cloudflareApiToken':  cloudflareApiToken,
+    'cloudflareAccountId': cloudflareAccountId,
+    'cloudflareProject':   cloudflareProject,
+    'cloudflarePagesUrl':  cloudflarePagesUrl,
+    'customDomain':        customDomain,
+    'domainRegistrar':     domainRegistrar.name,
+    'cloudflareZoneId':    cloudflareZoneId,
+    // deployStatus & deployMessage are runtime-only — intentionally not saved
   };
 
   factory DeploySettings.fromJson(Map<String, dynamic> j) => DeploySettings(
-    githubPagesEnabled: j['githubPagesEnabled'] ?? false,
-    githubRepo:         j['githubRepo']         ?? '',
-    githubBranch:       j['githubBranch']       ?? 'gh-pages',
-    cloudflareEnabled:  j['cloudflareEnabled']  ?? false,
-    cloudflareProject:  j['cloudflareProject']  ?? '',
-    customDomain:       j['customDomain']       ?? '',
+    hostingPlatform: HostingPlatform.values.firstWhere(
+        (p) => p.name == j['hostingPlatform'],
+        orElse: () => HostingPlatform.githubPages),
+    githubPagesEnabled:  j['githubPagesEnabled']  ?? false,
+    githubToken:         j['githubToken']         ?? '',
+    githubUsername:      j['githubUsername']      ?? '',
+    githubRepo:          j['githubRepo']          ?? '',
+    githubBranch:        j['githubBranch']        ?? 'gh-pages',
+    githubPagesUrl:      j['githubPagesUrl']      ?? '',
+    cloudflareEnabled:   j['cloudflareEnabled']   ?? false,
+    cloudflareApiToken:  j['cloudflareApiToken']  ?? '',
+    cloudflareAccountId: j['cloudflareAccountId'] ?? '',
+    cloudflareProject:   j['cloudflareProject']   ?? '',
+    cloudflarePagesUrl:  j['cloudflarePagesUrl']  ?? '',
+    customDomain:        j['customDomain']        ?? '',
+    domainRegistrar: DomainRegistrar.values.firstWhere(
+        (r) => r.name == j['domainRegistrar'],
+        orElse: () => DomainRegistrar.none),
+    cloudflareZoneId:    j['cloudflareZoneId']    ?? '',
   );
 }
 

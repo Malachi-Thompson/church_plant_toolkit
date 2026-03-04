@@ -22,9 +22,11 @@ class ExportResult {
   });
 }
 
+/// Exports website to a folder on disk and returns the path + file list.
+/// Used by the manual "Export & Deploy" button.
 Future<ExportResult> exportWebsite(ChurchWebsite site) async {
   try {
-    final dir = await getApplicationDocumentsDirectory();
+    final dir    = await getApplicationDocumentsDirectory();
     final outDir = Directory('${dir.path}/church_website_export');
     if (await outDir.exists()) await outDir.delete(recursive: true);
     await outDir.create(recursive: true);
@@ -32,20 +34,19 @@ Future<ExportResult> exportWebsite(ChurchWebsite site) async {
     final files = <String>[];
 
     // ── Shared CSS ──────────────────────────────────────────────────────────
-    final cssFile = File('${outDir.path}/style.css');
-    await cssFile.writeAsString(_generateCSS(site.settings));
+    await File('${outDir.path}/style.css').writeAsString(_generateCSS(site.settings));
     files.add('style.css');
 
     // ── Pages ───────────────────────────────────────────────────────────────
     for (final page in site.pages) {
       final filename = page.isHomePage ? 'index.html' : '${page.slug}.html';
-      final html     = _generatePage(site, page);
-      await File('${outDir.path}/$filename').writeAsString(html);
+      await File('${outDir.path}/$filename').writeAsString(_generatePage(site, page));
       files.add(filename);
     }
 
     // ── GitHub Actions workflow ─────────────────────────────────────────────
-    if (site.settings.deploy.githubPagesEnabled) {
+    if (site.settings.deploy.githubPagesEnabled ||
+        site.settings.deploy.hostingPlatform == HostingPlatform.githubPages) {
       final ghDir = Directory('${outDir.path}/.github/workflows');
       await ghDir.create(recursive: true);
       await File('${ghDir.path}/deploy.yml')
@@ -54,27 +55,91 @@ Future<ExportResult> exportWebsite(ChurchWebsite site) async {
     }
 
     // ── Cloudflare Pages config ─────────────────────────────────────────────
-    if (site.settings.deploy.cloudflareEnabled) {
+    if (site.settings.deploy.cloudflareEnabled ||
+        site.settings.deploy.hostingPlatform == HostingPlatform.cloudflarePages) {
       await File('${outDir.path}/wrangler.toml')
           .writeAsString(_cloudflareToml(site.settings.deploy));
       files.add('wrangler.toml');
     }
 
-    // ── Custom domain CNAME ─────────────────────────────────────────────────
-    if (site.settings.deploy.customDomain.isNotEmpty) {
+    // ── Custom domain CNAME (GitHub Pages requires this file in the repo) ───
+    if (site.settings.deploy.customDomain.isNotEmpty &&
+        site.settings.deploy.hostingPlatform == HostingPlatform.githubPages) {
       await File('${outDir.path}/CNAME')
           .writeAsString(site.settings.deploy.customDomain.trim());
       files.add('CNAME');
     }
 
     // ── README ──────────────────────────────────────────────────────────────
-    await File('${outDir.path}/README.md')
-        .writeAsString(_readme(site));
+    await File('${outDir.path}/README.md').writeAsString(_readme(site));
     files.add('README.md');
 
     return ExportResult(outputDir: outDir.path, files: files);
   } catch (e) {
     return ExportResult(outputDir: '', files: [], error: e.toString());
+  }
+}
+
+// ── IN-MEMORY EXPORT (used by deploy service — no disk writes) ────────────────
+
+class MemoryExportResult {
+  /// All file contents keyed by their relative path, e.g. 'index.html' -> '<html>...'
+  final Map<String, String> fileContents;
+  final List<String> files;
+  final String? error;
+
+  const MemoryExportResult({
+    required this.fileContents,
+    required this.files,
+    this.error,
+  });
+}
+
+/// Builds the full website in memory and returns a map of path → content.
+/// Used by GitHubDeployService and CloudflareDeployService.
+Future<MemoryExportResult> exportWebsiteToMemory(ChurchWebsite site) async {
+  try {
+    final contents = <String, String>{};
+    final files    = <String>[];
+
+    // CSS
+    contents['style.css'] = _generateCSS(site.settings);
+    files.add('style.css');
+
+    // Pages
+    for (final page in site.pages) {
+      final filename = page.isHomePage ? 'index.html' : '${page.slug}.html';
+      contents[filename] = _generatePage(site, page);
+      files.add(filename);
+    }
+
+    // GitHub Actions workflow
+    if (site.settings.deploy.hostingPlatform == HostingPlatform.githubPages) {
+      contents['.github/workflows/deploy.yml'] =
+          _githubActionsYml(site.settings.deploy);
+      files.add('.github/workflows/deploy.yml');
+    }
+
+    // Cloudflare wrangler.toml
+    if (site.settings.deploy.hostingPlatform == HostingPlatform.cloudflarePages) {
+      contents['wrangler.toml'] = _cloudflareToml(site.settings.deploy);
+      files.add('wrangler.toml');
+    }
+
+    // CNAME file for GitHub Pages custom domain
+    if (site.settings.deploy.customDomain.isNotEmpty &&
+        site.settings.deploy.hostingPlatform == HostingPlatform.githubPages) {
+      contents['CNAME'] = site.settings.deploy.customDomain.trim();
+      files.add('CNAME');
+    }
+
+    // README
+    contents['README.md'] = _readme(site);
+    files.add('README.md');
+
+    return MemoryExportResult(fileContents: contents, files: files);
+  } catch (e) {
+    return MemoryExportResult(fileContents: {}, files: [], error: e.toString());
   }
 }
 
@@ -134,141 +199,132 @@ section.dark h2, section.dark p { color: #fff; }
 .hero-content { max-width: var(--max-w); margin: 0 auto; padding: 0 24px; }
 .hero h1 { font-family: var(--font-head); font-size: clamp(2.2rem, 5vw, 4rem); font-weight: 900; line-height: 1.15; margin-bottom: 20px; }
 .hero p { font-size: clamp(1rem, 2vw, 1.3rem); opacity: 0.85; max-width: 600px; margin-bottom: 36px; }
-.btn { display: inline-block; padding: 14px 32px; border-radius: var(--radius); font-weight: 600; font-size: 1rem; cursor: pointer; transition: transform .15s, opacity .15s; }
-.btn:hover { opacity: 0.9; transform: translateY(-1px); }
-.btn-primary { background: var(--secondary); color: #fff; }
+
+/* BUTTONS */
+.btn { display: inline-block; padding: 14px 32px; border-radius: var(--radius); font-weight: 600; font-size: 1rem; transition: all .2s; cursor: pointer; }
+.btn-primary { background: var(--secondary); color: #1C1C2E; }
+.btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
 .btn-outline { border: 2px solid #fff; color: #fff; }
+.btn-outline:hover { background: rgba(255,255,255,0.1); }
+
+/* ABOUT */
+.about-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: center; }
+@media (max-width: 768px) { .about-grid { grid-template-columns: 1fr; } }
+.about-grid h2 { font-family: var(--font-head); font-size: clamp(1.5rem, 3vw, 2.2rem); font-weight: 700; color: var(--primary); margin-bottom: 16px; }
+.about-grid p { color: var(--text-muted); line-height: 1.8; }
+.about-img { border-radius: var(--radius); width: 100%; height: 360px; object-fit: cover; }
 
 /* SERVICE TIMES */
 .service-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; }
-.service-card { background: #fff; border: 1px solid var(--border); border-radius: var(--radius); padding: 28px; text-align: center; box-shadow: 0 1px 4px rgba(0,0,0,.05); }
-.service-card .day { font-weight: 700; color: var(--primary); font-size: 1.1rem; margin-bottom: 8px; }
-.service-card .time { font-size: 1.4rem; font-weight: 700; color: var(--text); }
-.service-card .location { font-size: 0.85rem; color: var(--text-muted); margin-top: 6px; }
-
-/* ABOUT */
-.about-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 60px; align-items: center; }
-.about-grid img { border-radius: var(--radius); object-fit: cover; width: 100%; height: 340px; }
-.about-text h2 { font-family: var(--font-head); font-size: 2rem; color: var(--primary); margin-bottom: 16px; }
-.about-text p { color: var(--text-muted); line-height: 1.8; }
-@media(max-width: 700px){ .about-grid { grid-template-columns: 1fr; } }
+.service-card { background: #fff; border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; text-align: center; }
+.service-card .day { font-family: var(--font-head); font-size: 1.3rem; font-weight: 700; color: var(--primary); }
+.service-card .time { font-size: 1rem; color: var(--text-muted); margin-top: 6px; }
+.service-card .loc { font-size: 0.85rem; color: var(--text-muted); margin-top: 4px; }
 
 /* EVENTS */
-.events-list { display: grid; gap: 16px; }
-.event-card { background: #fff; border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 24px; display: flex; gap: 20px; align-items: flex-start; }
-.event-date { background: var(--primary); color: #fff; border-radius: 8px; padding: 10px 16px; text-align: center; min-width: 64px; flex-shrink: 0; }
-.event-date .month { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; }
-.event-date .day-num { font-size: 1.6rem; font-weight: 900; line-height: 1; }
-.event-info h3 { font-weight: 700; font-size: 1.05rem; }
-.event-info p { color: var(--text-muted); font-size: 0.9rem; margin-top: 4px; }
+.events-list { display: flex; flex-direction: column; gap: 16px; }
+.event-card { display: flex; gap: 20px; align-items: flex-start; background: #fff; border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
+.event-date { background: var(--primary); color: #fff; border-radius: 8px; padding: 10px 14px; text-align: center; min-width: 60px; }
+.event-date .month { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 1px; }
+.event-date .day { font-size: 1.6rem; font-weight: 700; line-height: 1; }
 
 /* TEAM */
 .team-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 24px; }
 .team-card { text-align: center; }
-.team-avatar { width: 100px; height: 100px; border-radius: 50%; background: var(--primary); display: flex; align-items: center; justify-content: center; margin: 0 auto 14px; font-size: 2rem; color: #fff; font-weight: 700; overflow: hidden; }
-.team-avatar img { width: 100%; height: 100%; object-fit: cover; }
-.team-card h3 { font-weight: 700; }
-.team-card .role { color: var(--secondary); font-size: 0.85rem; font-weight: 600; margin-top: 4px; }
-.team-card p { color: var(--text-muted); font-size: 0.85rem; margin-top: 8px; }
-
-/* MAP */
-.map-container { border-radius: var(--radius); overflow: hidden; height: 400px; border: 1px solid var(--border); }
-.map-container iframe { width: 100%; height: 100%; border: none; }
+.team-avatar { width: 100px; height: 100px; border-radius: 50%; object-fit: cover; margin: 0 auto 12px; background: var(--border); display: flex; align-items: center; justify-content: center; font-size: 2.5rem; }
+.team-card h3 { font-size: 1rem; font-weight: 600; }
+.team-card .role { color: var(--primary); font-size: 0.85rem; font-weight: 500; }
+.team-card p { color: var(--text-muted); font-size: 0.85rem; margin-top: 6px; }
 
 /* CONTACT */
 .contact-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; }
-@media(max-width:700px){ .contact-grid { grid-template-columns: 1fr; } }
-.contact-form input, .contact-form textarea {
-  width: 100%; padding: 12px 16px; border: 1px solid var(--border); border-radius: 8px;
-  font-family: var(--font-body); font-size: 0.95rem; margin-bottom: 14px;
-  outline: none; transition: border .2s;
-}
-.contact-form input:focus, .contact-form textarea:focus { border-color: var(--primary); }
-.contact-form textarea { min-height: 120px; resize: vertical; }
-.contact-info p { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 16px; color: var(--text-muted); }
-.contact-info .icon { font-size: 1.1rem; flex-shrink: 0; margin-top: 2px; }
+@media (max-width: 768px) { .contact-grid { grid-template-columns: 1fr; } }
+.contact-info p { color: var(--text-muted); margin-bottom: 12px; }
+.contact-info .icon { margin-right: 8px; }
 
-/* CTA */
-.cta-band { background: var(--secondary); padding: 64px 0; text-align: center; }
-.cta-band h2 { font-family: var(--font-head); font-size: 2rem; color: #fff; margin-bottom: 12px; }
-.cta-band p { color: rgba(255,255,255,0.85); margin-bottom: 28px; font-size: 1.05rem; }
-
-/* ANNOUNCEMENT */
-.announcement-box { border-radius: var(--radius); padding: 24px 28px; display: flex; align-items: flex-start; gap: 16px; }
-.announcement-box h3 { font-weight: 700; font-size: 1.1rem; margin-bottom: 6px; }
+/* MAP */
+.map-embed { border-radius: var(--radius); overflow: hidden; height: 400px; background: #eee; }
+.map-embed iframe { width: 100%; height: 100%; border: 0; }
+.map-address { text-align: center; color: var(--text-muted); margin-top: 16px; }
 
 /* GALLERY */
-.gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
-.gallery-grid img { border-radius: 8px; object-fit: cover; width: 100%; height: 180px; }
+.gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.gallery-grid img { border-radius: 8px; height: 200px; object-fit: cover; width: 100%; }
+
+/* ANNOUNCEMENT */
+.announcement-box { border-radius: var(--radius); padding: 24px; display: flex; gap: 16px; align-items: flex-start; }
+.announcement-box h3 { font-size: 1.1rem; font-weight: 700; margin-bottom: 6px; }
+.announcement-box p { color: var(--text-muted); font-size: 0.95rem; }
 
 /* DIVIDER */
-.divider-line { border: none; border-top: 2px solid var(--border); margin: 8px 0; }
-.divider-cross { text-align: center; color: var(--primary); font-size: 2rem; padding: 8px 0; }
-.divider-wave { text-align: center; color: var(--border); font-size: 2rem; padding: 8px 0; }
-
-/* FOOTER */
-footer { background: color-mix(in srgb, var(--primary) 90%, #000); color: rgba(255,255,255,0.7); padding: 40px 24px; text-align: center; }
-footer .footer-social { display: flex; justify-content: center; gap: 20px; margin-bottom: 16px; }
-footer .footer-social a { color: rgba(255,255,255,0.7); font-size: 1.3rem; transition: color .2s; }
-footer .footer-social a:hover { color: #fff; }
-footer p { font-size: 0.85rem; }
+.divider-line { border: none; border-top: 1px solid var(--border); margin: 0; }
+.divider-cross { text-align: center; font-size: 1.5rem; padding: 12px 0; color: var(--primary); }
+.divider-wave { text-align: center; font-size: 1.2rem; padding: 12px 0; color: var(--border); letter-spacing: 4px; }
 
 /* RICH TEXT */
 .rich-text-content { max-width: 720px; margin: 0 auto; }
-.rich-text-content h2 { font-family: var(--font-head); color: var(--primary); margin-bottom: 16px; }
+.rich-text-content h2 { font-family: var(--font-head); font-size: 1.8rem; color: var(--primary); margin-bottom: 16px; }
 .rich-text-content p { color: var(--text-muted); line-height: 1.8; }
 
-/* SERMON */
-.sermon-block { background: #F0F4FF; border-left: 4px solid var(--primary); border-radius: 0 var(--radius) var(--radius) 0; padding: 24px 28px; }
-.sermon-block h2 { color: var(--primary); font-family: var(--font-head); margin-bottom: 12px; }
-.sermon-block p { color: var(--text-muted); white-space: pre-line; }
+/* CTA BAND */
+.cta-band { background: var(--primary); color: #fff; text-align: center; padding: 64px 24px; }
+.cta-band h2 { font-family: var(--font-head); font-size: clamp(1.6rem, 3vw, 2.4rem); margin-bottom: 12px; }
+.cta-band p { opacity: 0.85; margin-bottom: 28px; }
 
-/* RESPONSIVE */
-@media(max-width: 600px) {
+/* SERMON */
+.sermon-block { background: var(--primary); color: #fff; border-radius: var(--radius); padding: 32px; }
+.sermon-block h2 { font-family: var(--font-head); font-size: 1.6rem; margin-bottom: 8px; }
+.sermon-block .ref { color: var(--secondary); font-weight: 600; font-size: 0.9rem; margin-bottom: 16px; }
+.sermon-block p { opacity: 0.85; line-height: 1.8; }
+.sermon-points p { display: flex; gap: 10px; margin-bottom: 8px; }
+
+/* FOOTER */
+footer { background: #1C1C2E; color: rgba(255,255,255,0.6); text-align: center; padding: 32px 24px; font-size: 0.9rem; }
+.footer-social { display: flex; justify-content: center; gap: 16px; margin-bottom: 16px; font-size: 1.4rem; }
+.footer-social a { text-decoration: none; }
+
+@media (max-width: 640px) {
+  nav .nav-links { gap: 14px; }
+  nav .nav-links a { font-size: 0.8rem; }
   section { padding: 48px 0; }
   .hero { min-height: 60vh; }
-  .hero h1 { font-size: 2rem; }
-  nav .nav-links { display: none; }
 }
 ''';
 
 // ── PAGE GENERATOR ────────────────────────────────────────────────────────────
 
 String _generatePage(ChurchWebsite site, WebPage page) {
-  final s   = site.settings;
-  final nav = _nav(site, page);
-  final blocks = page.blocks
+  final s       = site.settings;
+  final blocks  = page.blocks
       .where((b) => b.isVisible)
       .map((b) => _block(b, s))
-      .join('\n');
-  final footer = _footer(s);
+      .join('\n\n');
 
   return '''<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${_esc(page.title)} – ${_esc(s.siteTitle)}</title>
-  <link rel="stylesheet" href="style.css">
+  <title>${_esc(page.isHomePage ? s.siteTitle : '${page.title} — ${s.siteTitle}')}</title>
   <meta name="description" content="${_esc(s.tagline)}">
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-$nav
-<main>
+${_nav(s, site.pages, page)}
+
 $blocks
-</main>
-$footer
+
+${_footer(s)}
 </body>
 </html>''';
 }
 
-String _nav(ChurchWebsite site, WebPage current) {
-  final s     = site.settings;
-  final links = site.pages
+String _nav(WebsiteSettings s, List<WebPage> pages, WebPage current) {
+  final links = pages
       .where((p) => p.showInNav)
       .map((p) {
-        final href    = p.isHomePage ? 'index.html' : '${p.slug}.html';
-        final active  = p.id == current.id ? ' class="active"' : '';
+        final href   = p.isHomePage ? 'index.html' : '${p.slug}.html';
+        final active = p.id == current.id ? ' class="active"' : '';
         return '<a href="$href"$active>${_esc(p.title)}</a>';
       })
       .join('\n          ');
@@ -339,13 +395,14 @@ String _servicesBlock(WebBlock b) {
     <div class="service-card">
       <div class="day">${_esc(st.day)}</div>
       <div class="time">${_esc(st.time)}</div>
-      ${st.location.isNotEmpty ? '<div class="location">${_esc(st.location)}</div>' : ''}
+      ${st.location.isNotEmpty ? '<div class="loc">${_esc(st.location)}</div>' : ''}
     </div>''').join('\n');
 
   return '''<section class="alt" id="services">
   <div class="container">
-    <div class="section-heading"><h2>${_esc(b.heading)}</h2>${b.subheading.isNotEmpty ? '<p>${_esc(b.subheading)}</p>' : ''}</div>
-    <div class="service-grid">$cards</div>
+    <div class="section-heading"><h2>${_esc(b.heading)}</h2></div>
+    <div class="service-grid">$cards
+    </div>
   </div>
 </section>''';
 }
@@ -354,63 +411,64 @@ String _aboutBlock(WebBlock b) => '''
 <section id="about">
   <div class="container">
     <div class="about-grid">
-      ${b.imageUrl.isNotEmpty ? '<img src="${_esc(b.imageUrl)}" alt="Church image">' : ''}
-      <div class="about-text">
+      <div>
         <h2>${_esc(b.heading)}</h2>
-        ${b.subheading.isNotEmpty ? '<p style="font-weight:600;margin-bottom:8px">${_esc(b.subheading)}</p>' : ''}
         <p>${_esc(b.body)}</p>
-        ${b.buttonText.isNotEmpty ? '<a href="${_esc(b.buttonUrl)}" class="btn btn-primary" style="margin-top:20px">${_esc(b.buttonText)}</a>' : ''}
+        ${b.buttonText.isNotEmpty ? '<a href="${_esc(b.buttonUrl)}" class="btn btn-primary" style="margin-top:24px">${_esc(b.buttonText)}</a>' : ''}
       </div>
+      ${b.imageUrl.isNotEmpty ? '<img class="about-img" src="${_esc(b.imageUrl)}" alt="${_esc(b.heading)}">' : '<div class="about-img" style="display:flex;align-items:center;justify-content:center;font-size:4rem;background:#F3F4F6">✝</div>'}
     </div>
   </div>
 </section>''';
 
 String _eventsBlock(WebBlock b) {
-  final items = b.events.isEmpty
-      ? '<p style="text-align:center;color:#6B7280">No upcoming events. Check back soon!</p>'
-      : b.events.map((e) {
-          final dateParts = e.date.split(' ');
-          final month = dateParts.length > 1 ? dateParts[0].substring(0, 3) : '';
-          final day   = dateParts.length > 1 ? dateParts[1].replaceAll(',','') : e.date;
-          return '''<div class="event-card">
-        <div class="event-date"><div class="month">${_esc(month)}</div><div class="day-num">${_esc(day)}</div></div>
-        <div class="event-info">
-          <h3>${_esc(e.title)}</h3>
-          ${e.time.isNotEmpty ? '<p>🕐 ${_esc(e.time)}</p>' : ''}
-          ${e.description.isNotEmpty ? '<p>${_esc(e.description)}</p>' : ''}
-        </div>
-      </div>''';
-        }).join('\n');
+  if (b.events.isEmpty) {
+    return '<section id="events"><div class="container"><div class="section-heading"><h2>${_esc(b.heading)}</h2></div><p style="text-align:center;color:#6B7280">No upcoming events.</p></div></section>';
+  }
+  final cards = b.events.map((e) {
+    final parts = e.date.split(' ');
+    final month = parts.length >= 2 ? parts[0].substring(0, 3) : '';
+    final day   = parts.length >= 2 ? parts[1] : e.date;
+    return '''
+    <div class="event-card">
+      <div class="event-date">
+        <div class="month">${_esc(month)}</div>
+        <div class="day">${_esc(day)}</div>
+      </div>
+      <div>
+        <h3>${_esc(e.title)}</h3>
+        ${e.time.isNotEmpty ? '<p style="color:#6B7280;font-size:.9rem">⏰ ${_esc(e.time)}</p>' : ''}
+        ${e.description.isNotEmpty ? '<p>${_esc(e.description)}</p>' : ''}
+      </div>
+    </div>''';
+  }).join('\n');
 
   return '''<section id="events">
   <div class="container">
-    <div class="section-heading"><h2>${_esc(b.heading)}</h2>${b.subheading.isNotEmpty ? '<p>${_esc(b.subheading)}</p>' : ''}</div>
-    <div class="events-list">$items</div>
+    <div class="section-heading"><h2>${_esc(b.heading)}</h2></div>
+    <div class="events-list">$cards
+    </div>
   </div>
 </section>''';
 }
 
 String _teamBlock(WebBlock b) {
-  final cards = b.team.isEmpty
-      ? '<p style="text-align:center;color:#6B7280">Team members coming soon.</p>'
-      : b.team.map((m) {
-          final initials = m.name.split(' ')
-              .take(2).map((w) => w.isNotEmpty ? w[0] : '').join();
-          final avatar = m.photoUrl.isNotEmpty
-              ? '<img src="${_esc(m.photoUrl)}" alt="${_esc(m.name)}">'
-              : initials;
-          return '''<div class="team-card">
-        <div class="team-avatar">$avatar</div>
-        <h3>${_esc(m.name)}</h3>
-        ${m.role.isNotEmpty ? '<p class="role">${_esc(m.role)}</p>' : ''}
-        ${m.bio.isNotEmpty  ? '<p>${_esc(m.bio)}</p>' : ''}
-      </div>''';
-        }).join('\n');
+  if (b.team.isEmpty) {
+    return '<section class="alt" id="team"><div class="container"><div class="section-heading"><h2>${_esc(b.heading)}</h2></div><p style="text-align:center;color:#6B7280">Team members coming soon.</p></div></section>';
+  }
+  final cards = b.team.map((m) => '''
+    <div class="team-card">
+      ${m.photoUrl.isNotEmpty ? '<img class="team-avatar" src="${_esc(m.photoUrl)}" alt="${_esc(m.name)}">' : '<div class="team-avatar">👤</div>'}
+      <h3>${_esc(m.name)}</h3>
+      ${m.role.isNotEmpty ? '<div class="role">${_esc(m.role)}</div>' : ''}
+      ${m.bio.isNotEmpty  ? '<p>${_esc(m.bio)}</p>'                   : ''}
+    </div>''').join('\n');
 
   return '''<section class="alt" id="team">
   <div class="container">
     <div class="section-heading"><h2>${_esc(b.heading)}</h2></div>
-    <div class="team-grid">$cards</div>
+    <div class="team-grid">$cards
+    </div>
   </div>
 </section>''';
 }
@@ -419,76 +477,59 @@ String _sermonBlock(WebBlock b) => '''
 <section id="sermon">
   <div class="container">
     <div class="sermon-block">
+      <div class="ref">${_esc(b.subheading)}</div>
       <h2>${_esc(b.heading)}</h2>
-      ${b.subheading.isNotEmpty ? '<p style="font-weight:600;margin-bottom:8px">${_esc(b.subheading)}</p>' : ''}
-      <p>${_esc(b.body)}</p>
+      ${b.body.isNotEmpty ? '<div class="sermon-points">${b.body.split('\n').map((l) => '<p><span class="icon">📌</span>${_esc(l)}</p>').join('')}</div>' : ''}
+    </div>
+  </div>
+</section>''';
+
+String _contactBlock(WebBlock b) => '''
+<section id="contact">
+  <div class="container">
+    <div class="section-heading"><h2>${_esc(b.heading)}</h2></div>
+    <div class="contact-grid">
+      <div class="contact-info">
+        ${b.subheading.isNotEmpty ? '<p>${_esc(b.subheading)}</p>' : ''}
+        ${b.body.isNotEmpty ? b.body.split('\n').map((l) => '<p><span class="icon">📍</span>${_esc(l)}</p>').join('') : ''}
+      </div>
+      <div>
+        ${b.buttonText.isNotEmpty ? '<a href="${_esc(b.buttonUrl)}" class="btn btn-primary">${_esc(b.buttonText)}</a>' : ''}
+      </div>
     </div>
   </div>
 </section>''';
 
 String _mapBlock(WebBlock b, WebsiteSettings s) {
-  String mapEmbed;
-  final addr = Uri.encodeComponent(b.mapAddress.isNotEmpty
-      ? b.mapAddress : s.siteTitle);
-
-  switch (b.mapProvider) {
-    case MapProvider.google:
-      mapEmbed = '<iframe src="https://maps.google.com/maps?q=${addr}&output=embed&z=${b.mapZoom}" allowfullscreen loading="lazy"></iframe>';
-      break;
-    case MapProvider.apple:
-      // Apple Maps uses maps.apple.com — works in Safari; falls back to OSM in other browsers
-      mapEmbed = '''<iframe src="https://maps.apple.com/?q=${addr}&z=${b.mapZoom}&output=embed"
-          allowfullscreen loading="lazy"
-          onerror="this.src='https://www.openstreetmap.org/export/embed.html?bbox=-0.5,51.3,0.3,51.6&layer=mapnik'">
-      </iframe>''';
-      break;
-    case MapProvider.openStreetMap:
-    default:
-      // OpenStreetMap — free, no API key needed
-      final lat  = b.mapLat  != 0 ? b.mapLat  : 40.7128;
-      final lng  = b.mapLng  != 0 ? b.mapLng  : -74.0060;
-      final zoom = int.tryParse(b.mapZoom) ?? 15;
-      final bbox = _osmBbox(lat, lng, zoom);
-      mapEmbed = '<iframe src="https://www.openstreetmap.org/export/embed.html?bbox=${bbox}&layer=mapnik&marker=${lat}%2C${lng}" allowfullscreen loading="lazy"></iframe>';
+  String embed;
+  if (b.mapProvider == MapProvider.google) {
+    final q = Uri.encodeComponent(b.mapAddress);
+    embed = '<iframe src="https://maps.google.com/maps?q=$q&output=embed" allowfullscreen></iframe>';
+  } else {
+    // OpenStreetMap
+    embed = '<iframe src="https://www.openstreetmap.org/export/embed.html?bbox=${b.mapLng - 0.01},${b.mapLat - 0.01},${b.mapLng + 0.01},${b.mapLat + 0.01}&layer=mapnik" allowfullscreen></iframe>';
   }
-
   return '''<section id="map">
   <div class="container">
-    <div class="section-heading"><h2>${_esc(b.heading)}</h2>${b.subheading.isNotEmpty ? '<p>${_esc(b.subheading)}</p>' : ''}</div>
-    ${b.mapAddress.isNotEmpty ? '<p style="text-align:center;margin-bottom:16px">📍 ${_esc(b.mapAddress)}</p>' : ''}
-    <div class="map-container">$mapEmbed</div>
+    <div class="section-heading"><h2>${_esc(b.heading)}</h2></div>
+    <div class="map-embed">$embed</div>
+    ${b.mapAddress.isNotEmpty ? '<p class="map-address">📍 ${_esc(b.mapAddress)}</p>' : ''}
   </div>
 </section>''';
 }
 
-String _osmBbox(double lat, double lng, int zoom) {
-  // Approximate bbox from center + zoom
-  final delta = 0.02 * (20 - zoom.clamp(1, 19));
-  final minLng = (lng - delta).toStringAsFixed(4);
-  final minLat = (lat - delta).toStringAsFixed(4);
-  final maxLng = (lng + delta).toStringAsFixed(4);
-  final maxLat = (lat + delta).toStringAsFixed(4);
-  return '$minLng%2C$minLat%2C$maxLng%2C$maxLat';
-}
-
-String _contactBlock(WebBlock b) => '''
-<section id="contact" class="alt">
+String _galleryBlock(WebBlock b) {
+  final imgs = b.galleryImages.isEmpty
+      ? '<p style="text-align:center;color:#6B7280">No photos yet.</p>'
+      : b.galleryImages.map((img) =>
+          '<img src="${_esc(img)}" alt="Church photo" loading="lazy">').join('\n');
+  return '''<section class="alt" id="gallery">
   <div class="container">
-    <div class="section-heading"><h2>${_esc(b.heading)}</h2>${b.subheading.isNotEmpty ? '<p>${_esc(b.subheading)}</p>' : ''}</div>
-    <div class="contact-grid">
-      <form class="contact-form" onsubmit="alert('Message sent! (Connect this form to Formspree or EmailJS for real delivery.)'); return false;">
-        <input type="text"  name="name"    placeholder="Your Name"    required>
-        <input type="email" name="email"   placeholder="Email Address" required>
-        <input type="text"  name="subject" placeholder="Subject">
-        <textarea           name="message" placeholder="Your message..."></textarea>
-        <button type="submit" class="btn btn-primary" style="width:100%">Send Message</button>
-      </form>
-      <div class="contact-info">
-        ${b.body.isNotEmpty ? b.body.split('\n').map((l) => '<p><span class="icon">📌</span>${_esc(l)}</p>').join('') : ''}
-      </div>
-    </div>
+    <div class="section-heading"><h2>${_esc(b.heading)}</h2></div>
+    <div class="gallery-grid">$imgs</div>
   </div>
 </section>''';
+}
 
 String _announcementBlock(WebBlock b) => '''
 <section>
@@ -505,17 +546,14 @@ String _announcementBlock(WebBlock b) => '''
 
 String _dividerBlock(WebBlock b) {
   switch (b.dividerStyle) {
-    case 'cross':
-      return '<div class="divider-cross">✝</div>';
-    case 'wave':
-      return '<div class="divider-wave">〰〰〰</div>';
-    default:
-      return '<hr class="divider-line" style="margin:0">';
+    case 'cross': return '<div class="divider-cross">✝</div>';
+    case 'wave':  return '<div class="divider-wave">〰〰〰</div>';
+    default:      return '<hr class="divider-line" style="margin:0">';
   }
 }
 
 String _richTextBlock(WebBlock b) => '''
-<section id="text-${b.id.substring(0,6)}">
+<section id="text-${b.id.substring(0, 6)}">
   <div class="container">
     <div class="rich-text-content">
       ${b.heading.isNotEmpty ? '<h2>${_esc(b.heading)}</h2>' : ''}
@@ -533,24 +571,10 @@ String _ctaBlock(WebBlock b) => '''
   </div>
 </section>''';
 
-String _galleryBlock(WebBlock b) {
-  final imgs = b.galleryImages.isEmpty
-      ? '<p style="text-align:center;color:#6B7280">No photos yet.</p>'
-      : b.galleryImages.map((img) =>
-          '<img src="${_esc(img)}" alt="Church photo" loading="lazy">').join('\n');
-  return '''<section class="alt" id="gallery">
-  <div class="container">
-    <div class="section-heading"><h2>${_esc(b.heading)}</h2></div>
-    <div class="gallery-grid">$imgs</div>
-  </div>
-</section>''';
-}
-
 // ── DEPLOY CONFIG GENERATORS ──────────────────────────────────────────────────
 
 String _githubActionsYml(DeploySettings d) => '''
-# GitHub Actions – Deploy to GitHub Pages
-# Push this repo to GitHub, then enable Pages in Settings > Pages > Source: gh-pages branch
+# GitHub Actions – auto-deploy to GitHub Pages on every push to main
 name: Deploy to GitHub Pages
 
 on:
@@ -565,7 +589,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
         with:
@@ -601,21 +624,23 @@ ${site.pages.map((p) => '- `${p.isHomePage ? "index" : p.slug}.html` — ${p.tit
 ### Option 1 – GitHub Pages (free)
 1. Create a GitHub repo at **github.com/new**
 2. Upload these files to the repo
-3. Go to **Settings → Pages → Source** and set branch to `${d.githubBranch}`
+3. Go to **Settings → Pages → Source** and set branch to `main`
 4. Your site will be live at **https://USERNAME.github.io/REPO**
 ${d.githubRepo.isNotEmpty ? '\n   Configured repo: `${d.githubRepo}`' : ''}
+${d.githubPagesUrl.isNotEmpty ? '\n   Live URL: ${d.githubPagesUrl}' : ''}
 
 ### Option 2 – Cloudflare Pages (free)
 1. Sign up at **pages.cloudflare.com**
 2. Create a new project and upload these files
 3. Your site will be live at **PROJECT.pages.dev**
+${d.cloudflareProject.isNotEmpty ? '\n   Configured project: `${d.cloudflareProject}`' : ''}
+${d.cloudflarePagesUrl.isNotEmpty ? '\n   Live URL: ${d.cloudflarePagesUrl}' : ''}
 
 ### Option 3 – Any Static Host
 Upload all files to Netlify, Vercel, Firebase Hosting, or any web server.
 
 ## Custom Domain
-Set your CNAME record to point to your GitHub Pages or Cloudflare Pages URL.
-${d.customDomain.isNotEmpty ? '\nConfigured domain: `${d.customDomain}`' : ''}
+${d.customDomain.isNotEmpty ? 'Configured domain: `${d.customDomain}`\n\nAdd a CNAME record pointing to: `${d.cnameTarget}`' : 'Set your CNAME record to point to your GitHub Pages or Cloudflare Pages URL.'}
 
 ---
 *Built with Church Plant Toolkit*
