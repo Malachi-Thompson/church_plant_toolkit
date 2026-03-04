@@ -64,6 +64,21 @@ String? extractTextFromDocx(String path) {
   }
 }
 
+/// Extracts plain text from raw .docx bytes (works on all platforms, no file path needed).
+String? extractTextFromDocxBytes(Uint8List bytes) {
+  try {
+    final archive = ZipDecoder().decodeBytes(bytes);
+    final docXml = archive.files
+        .where((f) => f.name == 'word/document.xml' && f.isFile)
+        .firstOrNull;
+    if (docXml == null) return null;
+    final xml = utf8.decode(docXml.content as List<int>);
+    return _xmlToPlainText(xml);
+  } catch (e) {
+    return null;
+  }
+}
+
 // ── DOCX BUILDER ─────────────────────────────────────────────────────────────
 
 Uint8List _buildDocxBytes(Map<String, dynamic> n) {

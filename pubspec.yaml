@@ -42,7 +42,6 @@ dependencies:
   #     platform :osx, '10.15'
   #
   # The full-gpl variant supports librtmp (needed for RTMP streaming).
-  ffmpeg_kit_flutter_full_gpl: ^6.0.3
 
   # screen_recorder captures the Flutter widget tree as video frames.
   # Used as the video source piped into ffmpeg for recording/streaming.

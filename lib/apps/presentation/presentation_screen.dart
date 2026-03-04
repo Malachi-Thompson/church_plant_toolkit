@@ -9,6 +9,7 @@
 //
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -511,8 +512,26 @@ class _PresentationScreenState extends State<PresentationScreen> {
         onExit:         () => setState(() => _presenting = false),
         isStreaming:    _isStreaming,
         isRecording:    _isRecording,
-        onToggleStream: _toggleStreaming,
-        onToggleRecord: _toggleRecording,
+        onToggleStream: () {
+        if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Live streaming is available on desktop only.'),
+            behavior: SnackBarBehavior.floating,
+          ));
+          return;
+        }
+        setState(() => _isStreaming = !_isStreaming);
+      },
+      onToggleRecord: () {
+        if (!kIsWeb && (Platform.isAndroid || Platform.isIOS)) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Recording is available on desktop only.'),
+            behavior: SnackBarBehavior.floating,
+          ));
+          return;
+        }
+        setState(() => _isRecording = !_isRecording);
+      },
       );
     }
 

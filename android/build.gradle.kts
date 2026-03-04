@@ -7,13 +7,7 @@ allprojects {
         resolutionStrategy {
             force("com.arthenica:ffmpeg-kit-full-gpl:6.0.3")
         }
-defaultConfig {
-    applicationId = "com.example.church_plant_toolkit"
-    minSdk = 24                          // change this line
-    targetSdk = flutter.targetSdkVersion
-    versionCode = flutter.versionCode
-    versionName = flutter.versionName
-}    }
+    }
 }
 
 

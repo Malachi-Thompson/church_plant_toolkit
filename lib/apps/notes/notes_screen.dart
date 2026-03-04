@@ -10,18 +10,22 @@
 
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';                          // ADD
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';          // ADD (for kIsWeb)
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';   // ADD (needed for launchUrl)
 import 'package:uuid/uuid.dart';
 import '../../models/app_state.dart';
 import '../../screens/dashboard_screen.dart';
 import '../../services/bible_service.dart';
 import '../../theme.dart';
 import '../../widgets/scripture_field.dart';
+import 'note_exporter.dart';                       // ADD
 
 // ══════════════════════════════════════════════════════════════════════════════
 // DATA MODEL
@@ -185,7 +189,7 @@ class _NotesScreenState extends State<NotesScreen> {
   }
 
   // ── PERSISTENCE ─────────────────────────────────────────────────────────────
-
+  
   Future<void> _loadNotes() async {
     final prefs = await SharedPreferences.getInstance();
     final raw   = prefs.getString('notes_v2');
@@ -299,32 +303,33 @@ class _NotesScreenState extends State<NotesScreen> {
       type: FileType.custom,
       allowedExtensions: ['txt', 'md', 'docx'],
       dialogTitle: 'Import Note File',
+      withData: true, // ensures bytes are available on mobile
     );
     if (result == null || result.files.isEmpty) return;
 
     final file = result.files.first;
-    final path = file.path;
-    if (path == null) return;
-
     String content = '';
     String title   = file.name.replaceAll(RegExp(r'\.[^.]+$'), '');
 
     if (file.extension == 'txt' || file.extension == 'md') {
-      content = await File(path).readAsString();
+      if (file.path != null) {
+        content = await File(file.path!).readAsString();
+      } else if (file.bytes != null) {
+        content = utf8.decode(file.bytes!);
+      }
     } else if (file.extension == 'docx') {
-      // Extract text from docx using python/pandoc if available
-      final tmpOut = '${(await getTemporaryDirectory()).path}/note_import.txt';
-      try {
-        final res = await Process.run('pandoc',
-            [path, '-t', 'plain', '-o', tmpOut]);
-        if (res.exitCode == 0) {
-          content = await File(tmpOut).readAsString();
-        } else {
-          content = '[Could not extract text from .docx automatically.\n'
-              'Paste your content here and delete this line.]';
-        }
-      } catch (_) {
-        content = '[pandoc not found — paste your content here.]';
+      // Use pure-Dart extraction (works on all platforms)
+      Uint8List? bytes;
+      if (file.bytes != null) {
+        bytes = file.bytes!;
+      } else if (file.path != null) {
+        bytes = await File(file.path!).readAsBytes();
+      }
+      if (bytes != null) {
+        content = extractTextFromDocxBytes(bytes) ??
+            '[Could not extract text from .docx — paste your content here.]';
+      } else {
+        content = '[Could not read file — paste your content here.]';
       }
     }
 
@@ -337,7 +342,6 @@ class _NotesScreenState extends State<NotesScreen> {
       subfolder:   _activeSubfolder,
       messageType: MessageType.other,
       date:        now,
-      sourceFilePath: path,
       createdAt:   now,
       updatedAt:   now,
     );
@@ -350,64 +354,75 @@ class _NotesScreenState extends State<NotesScreen> {
   // ── EXPORT ───────────────────────────────────────────────────────────────────
 
   Future<void> _exportNote(NoteModel note, {required bool pdf}) async {
-    final tmpDir    = await getTemporaryDirectory();
-    final jsonPath  = '${tmpDir.path}/note_export_input.json';
-    final ext       = pdf ? 'pdf' : 'docx';
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(const SnackBar(
+        content: Text('Exporting…'), behavior: SnackBarBehavior.floating));
 
-    // Ask where to save
-    final outPath = await FilePicker.platform.saveFile(
-      dialogTitle:       'Save ${pdf ? 'PDF' : 'Word'} File',
-      fileName:          '${note.title.replaceAll(RegExp(r'[^\w\s]'), '')}_note.$ext',
-      allowedExtensions: [ext],
-      type: FileType.custom,
-    );
-    if (outPath == null) return;
-
-    // Write JSON payload
     final payload = {
       ...note.toJson(),
       'translation': note.translation ??
           context.read<AppState>().bibleService.translationId,
     };
-    await File(jsonPath).writeAsString(jsonEncode(payload));
-
-    if (!mounted) return;
-    final messenger = ScaffoldMessenger.of(context);
-    messenger.showSnackBar(const SnackBar(
-        content: Text('Exporting…'), behavior: SnackBarBehavior.floating));
+    final safe = note.title.replaceAll(RegExp(r'[^\w\s]'), '').trim();
+    final ext  = pdf ? 'pdf' : 'docx';
 
     try {
-      ProcessResult res;
-      if (pdf) {
-        // Try Python with reportlab
-        final scriptPath = await _extractScript('note_export.py');
-        res = await Process.run('python', [scriptPath, jsonPath, outPath]);
-        if (res.exitCode != 0) {
-          res = await Process.run('python3', [scriptPath, jsonPath, outPath]);
+      final bool isMobile = !kIsWeb &&
+          (Platform.isAndroid || Platform.isIOS);
+
+      if (isMobile) {
+        // Mobile: write to temp dir then open/share
+        final tmpDir  = await getTemporaryDirectory();
+        final outPath = '${tmpDir.path}/${safe}_note.$ext';
+
+        if (pdf) {
+          // Opens a print-ready HTML page in the browser
+          await exportHtmlForPdf(payload);
+        } else {
+          await exportDocx(payload, outPath);
+          final uri = Uri.file(outPath);
+          if (await canLaunchUrl(uri)) {
+            await launchUrl(uri, mode: LaunchMode.externalApplication);
+          }
         }
       } else {
-        // Node.js docx
-        final scriptPath = await _extractScript('note_export.js');
-        res = await Process.run('node', [scriptPath, jsonPath, outPath]);
-      }
+        // Desktop: show native save dialog
+        final outPath = await FilePicker.platform.saveFile(
+          dialogTitle:       'Save ${pdf ? 'PDF' : 'Word'} File',
+          fileName:          '${safe}_note.$ext',
+          allowedExtensions: [ext],
+          type: FileType.custom,
+        );
+        if (outPath == null) return;
 
-      if (!mounted) return;
-      if (res.exitCode == 0 || (res.stdout as String).startsWith('OK:')) {
+        if (pdf) {
+          await exportHtmlForPdf(payload);
+        } else {
+          await exportDocx(payload, outPath);
+        }
+
+        if (!mounted) return;
         messenger.showSnackBar(SnackBar(
           content: Text('Saved to $outPath'),
           behavior: SnackBarBehavior.floating,
-          action: SnackBarAction(
-            label: 'Open',
-            onPressed: () async {
-              if (Platform.isWindows) {
-                await Process.run('explorer', ['/select,', outPath]);
-              }
-            },
-          ),
+          action: (!kIsWeb && Platform.isWindows)
+              ? SnackBarAction(
+                  label: 'Open',
+                  onPressed: () =>
+                      Process.run('explorer', ['/select,', outPath]),
+                )
+              : null,
         ));
-      } else {
-        throw Exception(res.stderr ?? res.stdout);
+        return; // skip the generic success snackbar below
       }
+
+      if (!mounted) return;
+      messenger.showSnackBar(SnackBar(
+        content: Text(pdf
+            ? 'Print page opened — use File → Print → Save as PDF'
+            : 'File exported successfully'),
+        behavior: SnackBarBehavior.floating,
+      ));
     } catch (e) {
       if (!mounted) return;
       messenger.showSnackBar(SnackBar(
@@ -416,22 +431,6 @@ class _NotesScreenState extends State<NotesScreen> {
         behavior: SnackBarBehavior.floating,
       ));
     }
-  }
-
-  /// Copy a bundled asset script to a temp dir so we can run it
-  Future<String> _extractScript(String filename) async {
-    final tmpDir = await getTemporaryDirectory();
-    final dest   = File('${tmpDir.path}/$filename');
-    if (!await dest.exists()) {
-      // Copy from our app's assets/scripts/ bundle
-      // (files are also in the repo root for direct use in dev)
-      final srcPath = '${Directory.current.path}/assets/scripts/$filename';
-      final src = File(srcPath);
-      if (await src.exists()) {
-        await src.copy(dest.path);
-      }
-    }
-    return dest.path;
   }
 
   // ── BUILD ────────────────────────────────────────────────────────────────────
