@@ -10,7 +10,7 @@ import '../models/presentation_models.dart';
 import '../models/slide_defaults.dart';
 import '../../../theme.dart';
 
-class PresentationsHome extends StatelessWidget {
+class PresentationsHome extends StatefulWidget {
   final List<Deck>           decks;
   final Color                primary;
   final Color                secondary;
@@ -33,19 +33,90 @@ class PresentationsHome extends StatelessWidget {
   });
 
   @override
+  State<PresentationsHome> createState() => _PresentationsHomeState();
+}
+
+class _PresentationsHomeState extends State<PresentationsHome> {
+  final TextEditingController _searchCtrl = TextEditingController();
+  String _query = '';
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  List<Deck> get _filtered {
+    if (_query.trim().isEmpty) return widget.decks;
+    final q = _query.toLowerCase();
+    return widget.decks
+        .where((d) => d.name.toLowerCase().contains(q))
+        .toList();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return decks.isEmpty
-        ? _EmptyHome(primary: primary, secondary: secondary, onNew: onNewDeck)
-        : _DeckGrid(
-            decks:           decks,
-            primary:         primary,
-            secondary:       secondary,
-            onOpen:          onOpenDeck,
-            onNew:           onNewDeck,
-            onDelete:        onDeleteDeck,
-            onRename:        onRenameDeck,
-            onDuplicate:     onDuplicateDeck,
-          );
+    final filtered = _filtered;
+
+    return Column(
+      children: [
+        // ── SEARCH BAR ────────────────────────────────────────────────────
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+          child: TextField(
+            controller: _searchCtrl,
+            onChanged: (v) => setState(() => _query = v),
+            decoration: InputDecoration(
+              hintText:     'Search presentations…',
+              prefixIcon:   const Icon(Icons.search),
+              border:       OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              filled:       true,
+              fillColor:    Colors.grey.shade100,
+              contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16, vertical: 12),
+              suffixIcon: _query.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear),
+                      onPressed: () {
+                        _searchCtrl.clear();
+                        setState(() => _query = '');
+                      },
+                    )
+                  : null,
+            ),
+          ),
+        ),
+
+        // ── BODY ──────────────────────────────────────────────────────────
+        Expanded(
+          child: widget.decks.isEmpty
+              ? _EmptyHome(
+                  primary:   widget.primary,
+                  secondary: widget.secondary,
+                  onNew:     widget.onNewDeck,
+                )
+              : filtered.isEmpty
+                  ? Center(
+                      child: Text(
+                        'No presentations match "$_query"',
+                        style: TextStyle(color: Colors.grey.shade500),
+                      ),
+                    )
+                  : _DeckGrid(
+                      decks:       filtered,
+                      primary:     widget.primary,
+                      secondary:   widget.secondary,
+                      onOpen:      widget.onOpenDeck,
+                      onNew:       widget.onNewDeck,
+                      onDelete:    widget.onDeleteDeck,
+                      onRename:    widget.onRenameDeck,
+                      onDuplicate: widget.onDuplicateDeck,
+                    ),
+        ),
+      ],
+    );
   }
 }
 
@@ -78,7 +149,7 @@ class _DeckGrid extends StatelessWidget {
         // ── HEADER ──────────────────────────────────────────────────────────
         SliverToBoxAdapter(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(24, 28, 24, 8),
+            padding: const EdgeInsets.fromLTRB(24, 12, 24, 8),
             child: Row(
               children: [
                 Column(
@@ -118,13 +189,14 @@ class _DeckGrid extends StatelessWidget {
           sliver: SliverGrid(
             gridDelegate:
                 const SliverGridDelegateWithMaxCrossAxisExtent(
-              maxCrossAxisExtent:  320,
-              mainAxisExtent:      210,
-              crossAxisSpacing:    16,
-              mainAxisSpacing:     16,
+              maxCrossAxisExtent: 320,
+              mainAxisExtent:     210,
+              crossAxisSpacing:   16,
+              mainAxisSpacing:    16,
             ),
             delegate: SliverChildBuilderDelegate(
               (ctx, i) => _DeckCard(
+                key:         ValueKey(decks[i].id),
                 deck:        decks[i],
                 primary:     primary,
                 secondary:   secondary,
@@ -153,6 +225,7 @@ class _DeckCard extends StatelessWidget {
   final VoidCallback onDuplicate;
 
   const _DeckCard({
+    super.key,
     required this.deck,
     required this.primary,
     required this.secondary,
@@ -162,7 +235,6 @@ class _DeckCard extends StatelessWidget {
     required this.onDuplicate,
   });
 
-  // Build a small strip of coloured dots representing the first few slides
   Widget _slideStrip() {
     final preview = deck.slides.take(6).toList();
     if (preview.isEmpty) {
@@ -190,7 +262,6 @@ class _DeckCard extends StatelessWidget {
     );
   }
 
-  // Preview of the first slide's text content
   Widget _firstSlidePreview() {
     if (deck.slides.isEmpty) {
       return Center(
@@ -200,7 +271,7 @@ class _DeckCard extends StatelessWidget {
     }
     final first = deck.slides.first;
     return Container(
-      color: first.bgColor,
+      color:   first.bgColor,
       padding: const EdgeInsets.all(12),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -222,7 +293,7 @@ class _DeckCard extends StatelessWidget {
             Text(
               first.body,
               style: TextStyle(
-                  color: first.textColor.withValues(alpha: 0.80),
+                  color:    first.textColor.withValues(alpha: 0.80),
                   fontSize: 8),
               textAlign: TextAlign.center,
               maxLines:  2,
@@ -247,7 +318,7 @@ class _DeckCard extends StatelessWidget {
     final lastUsed = deck.lastUsedAt ?? deck.createdAt;
 
     return Card(
-      elevation: 2,
+      elevation:    2,
       clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12)),
@@ -270,7 +341,6 @@ class _DeckCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Slide colour strip
                     _slideStrip(),
                     const SizedBox(height: 8),
 
@@ -288,11 +358,58 @@ class _DeckCard extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                        _CardMenu(
-                          onOpen:      onOpen,
-                          onRename:    onRename,
-                          onDuplicate: onDuplicate,
-                          onDelete:    onDelete,
+                        // Use a plain PopupMenuButton — no nested InkWell
+                        PopupMenuButton<String>(
+                          icon: Icon(Icons.more_vert,
+                              size: 18, color: Colors.grey.shade500),
+                          onSelected: (v) {
+                            switch (v) {
+                              case 'open':      onOpen();      break;
+                              case 'rename':    onRename();    break;
+                              case 'duplicate': onDuplicate(); break;
+                              case 'delete':    onDelete();    break;
+                            }
+                          },
+                          itemBuilder: (_) => [
+                            const PopupMenuItem(
+                              value: 'open',
+                              child: ListTile(
+                                leading: Icon(Icons.open_in_new, size: 18),
+                                title:   Text('Open'),
+                                dense:   true,
+                              ),
+                            ),
+                            const PopupMenuItem(
+                              value: 'rename',
+                              child: ListTile(
+                                leading: Icon(
+                                    Icons.drive_file_rename_outline,
+                                    size: 18),
+                                title: Text('Rename'),
+                                dense: true,
+                              ),
+                            ),
+                            const PopupMenuItem(
+                              value: 'duplicate',
+                              child: ListTile(
+                                leading: Icon(Icons.copy, size: 18),
+                                title:   Text('Duplicate'),
+                                dense:   true,
+                              ),
+                            ),
+                            const PopupMenuDivider(),
+                            const PopupMenuItem(
+                              value: 'delete',
+                              child: ListTile(
+                                leading: Icon(Icons.delete_outline,
+                                    size: 18, color: Colors.red),
+                                title: Text('Delete',
+                                    style:
+                                        TextStyle(color: Colors.red)),
+                                dense: true,
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -308,7 +425,7 @@ class _DeckCard extends StatelessWidget {
                           '${deck.slideCount} slide${deck.slideCount == 1 ? '' : 's'}',
                           style: TextStyle(
                               fontSize: 11,
-                              color: Colors.grey.shade500),
+                              color:    Colors.grey.shade500),
                         ),
                         const Spacer(),
                         Icon(Icons.schedule,
@@ -318,7 +435,7 @@ class _DeckCard extends StatelessWidget {
                           _formatDate(lastUsed),
                           style: TextStyle(
                               fontSize: 11,
-                              color: Colors.grey.shade500),
+                              color:    Colors.grey.shade500),
                         ),
                       ],
                     ),
@@ -329,74 +446,6 @@ class _DeckCard extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-// ── CARD CONTEXT MENU ─────────────────────────────────────────────────────────
-class _CardMenu extends StatelessWidget {
-  final VoidCallback onOpen;
-  final VoidCallback onRename;
-  final VoidCallback onDuplicate;
-  final VoidCallback onDelete;
-
-  const _CardMenu({
-    required this.onOpen,
-    required this.onRename,
-    required this.onDuplicate,
-    required this.onDelete,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return PopupMenuButton<String>(
-      icon: Icon(Icons.more_vert,
-          size: 18, color: Colors.grey.shade500),
-      onSelected: (v) {
-        switch (v) {
-          case 'open':      onOpen();      break;
-          case 'rename':    onRename();    break;
-          case 'duplicate': onDuplicate(); break;
-          case 'delete':    onDelete();    break;
-        }
-      },
-      itemBuilder: (_) => const [
-        PopupMenuItem(
-          value: 'open',
-          child: ListTile(
-            leading: Icon(Icons.open_in_new, size: 18),
-            title:   Text('Open'),
-            dense:   true,
-          ),
-        ),
-        PopupMenuItem(
-          value: 'rename',
-          child: ListTile(
-            leading: Icon(Icons.drive_file_rename_outline, size: 18),
-            title:   Text('Rename'),
-            dense:   true,
-          ),
-        ),
-        PopupMenuItem(
-          value: 'duplicate',
-          child: ListTile(
-            leading: Icon(Icons.copy, size: 18),
-            title:   Text('Duplicate'),
-            dense:   true,
-          ),
-        ),
-        PopupMenuDivider(),
-        PopupMenuItem(
-          value: 'delete',
-          child: ListTile(
-            leading: Icon(Icons.delete_outline,
-                size: 18, color: Colors.red),
-            title: Text('Delete',
-                style: TextStyle(color: Colors.red)),
-            dense: true,
-          ),
-        ),
-      ],
     );
   }
 }
@@ -412,9 +461,9 @@ Future<String?> showRenameDeckDialog(
     builder: (ctx) => AlertDialog(
       title: const Text('Rename Presentation'),
       content: TextField(
-        controller:   ctrl,
-        autofocus:    true,
-        decoration:   const InputDecoration(
+        controller:  ctrl,
+        autofocus:   true,
+        decoration: const InputDecoration(
           labelText: 'Presentation name',
           border:    OutlineInputBorder(),
         ),
@@ -483,7 +532,6 @@ class _EmptyHome extends StatelessWidget {
             ),
           ),
 
-          // Slide type quick-starts
           const SizedBox(height: 40),
           Text(
             'Or start from a template:',

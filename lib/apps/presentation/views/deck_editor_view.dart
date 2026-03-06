@@ -1,82 +1,76 @@
 // lib/apps/presentation/views/deck_editor_view.dart
 //
-// The three-column editor: deck list | slide list | slide editor.
-// This is the main working area once a user has selected or created a deck.
+// Two-column editor: slide list | slide editor.
+// The left deck-list panel has been removed entirely.
+// Navigation back to all decks is via the AppBar ← in presentation_screen.dart.
 import 'package:flutter/material.dart';
 import '../models/presentation_models.dart';
 import '../models/slide_defaults.dart';
 import '../widgets/presentation_widgets.dart';
+import '../songselect/songselect_import.dart';
 import 'slide_editor_view.dart';
 
 class DeckEditorView extends StatelessWidget {
-  final List<Deck>             decks;
-  final Deck?                  selectedDeck;
-  final Slide?                 selectedSlide;
-  final Color                  primary;
-  final Color                  secondary;
-  final ValueChanged<Deck>     onSelectDeck;
-  final VoidCallback           onAddDeck;
-  final ValueChanged<Deck>     onDeleteDeck;
-  final ValueChanged<Slide>    onSelectSlide;
-  final ValueChanged<String>   onAddSlide;
-  final ValueChanged<Slide>    onDeleteSlide;
-  final Function(int, int)     onReorderSlides;
-  final VoidCallback           onSlideChanged;
+  final Deck                                    deck;
+  final Slide?                                  selectedSlide;
+  final Color                                   primary;
+  final Color                                   secondary;
+  final ValueChanged<Slide>                     onSelectSlide;
+  final ValueChanged<String>                    onAddSlide;
+  final ValueChanged<Slide>                     onDeleteSlide;
+  final Function(int, int)                      onReorderSlides;
+  final VoidCallback                            onSlideChanged;
+  final ValueChanged<SongCollection>            onImportCollection;
+  final ValueChanged<String>                    onToggleCollection;
+  final void Function(String collId, int delta) onMoveCollection;
+  final ValueChanged<String>                    onRemoveCollection;
+  final void Function(String, int, int)         onReorderCollectionSlide;
 
   const DeckEditorView({
     super.key,
-    required this.decks,
-    required this.selectedDeck,
+    required this.deck,
     required this.selectedSlide,
     required this.primary,
     required this.secondary,
-    required this.onSelectDeck,
-    required this.onAddDeck,
-    required this.onDeleteDeck,
     required this.onSelectSlide,
     required this.onAddSlide,
     required this.onDeleteSlide,
     required this.onReorderSlides,
     required this.onSlideChanged,
+    required this.onImportCollection,
+    required this.onToggleCollection,
+    required this.onMoveCollection,
+    required this.onRemoveCollection,
+    required this.onReorderCollectionSlide,
   });
 
   @override
   Widget build(BuildContext context) {
     return Row(
       children: [
-        // ── DECK LIST ──────────────────────────────────────────────────────
+        // ── SLIDE LIST ─────────────────────────────────────────────────────
         SizedBox(
-          width: 220,
-          child: _DeckListPanel(
-            decks:        decks,
-            selectedDeck: selectedDeck,
-            primary:      primary,
-            onSelect:     onSelectDeck,
-            onAdd:        onAddDeck,
-            onDelete:     onDeleteDeck,
+          width: 230,
+          child: _SlideListPanel(
+            deck:                     deck,
+            selectedSlide:            selectedSlide,
+            primary:                  primary,
+            secondary:                secondary,
+            onSelectSlide:            onSelectSlide,
+            onAddSlide:               onAddSlide,
+            onDeleteSlide:            onDeleteSlide,
+            onReorderSlides:          onReorderSlides,
+            onImportCollection:       onImportCollection,
+            onToggleCollection:       onToggleCollection,
+            onMoveCollection:         onMoveCollection,
+            onRemoveCollection:       onRemoveCollection,
+            onReorderCollectionSlide: onReorderCollectionSlide,
+            importContext:            context,
           ),
         ),
         const VerticalDivider(width: 1),
 
-        // ── SLIDE LIST ─────────────────────────────────────────────────────
-        if (selectedDeck != null) ...[
-          SizedBox(
-            width: 190,
-            child: _SlideListPanel(
-              deck:          selectedDeck!,
-              selectedSlide: selectedSlide,
-              primary:       primary,
-              secondary:     secondary,
-              onSelect:      onSelectSlide,
-              onAdd:         onAddSlide,
-              onDelete:      onDeleteSlide,
-              onReorder:     onReorderSlides,
-            ),
-          ),
-          const VerticalDivider(width: 1),
-        ],
-
-        // ── EDITOR / PLACEHOLDER ───────────────────────────────────────────
+        // ── SLIDE EDITOR / PLACEHOLDER ─────────────────────────────────────
         Expanded(
           child: selectedSlide != null
               ? SlideEditorView(
@@ -85,133 +79,67 @@ class DeckEditorView extends StatelessWidget {
                   secondary: secondary,
                   onChanged: onSlideChanged,
                 )
-              : selectedDeck != null
-                  ? _DeckEmptyPrompt(
-                      primary:   primary,
-                      secondary: secondary,
-                      onAdd:     onAddSlide,
-                    )
-                  : EmptyStateMessage(
-                      icon:    Icons.slideshow,
-                      message: 'Select or create a deck to get started',
-                      color:   primary,
-                    ),
+              : _EmptyPrompt(primary: primary, secondary: secondary,
+                  onAdd: onAddSlide),
         ),
       ],
     );
   }
 }
 
-// ── DECK LIST PANEL ───────────────────────────────────────────────────────────
-class _DeckListPanel extends StatelessWidget {
-  final List<Deck>         decks;
-  final Deck?              selectedDeck;
-  final Color              primary;
-  final ValueChanged<Deck> onSelect;
-  final VoidCallback       onAdd;
-  final ValueChanged<Deck> onDelete;
-
-  const _DeckListPanel({
-    required this.decks,
-    required this.selectedDeck,
-    required this.primary,
-    required this.onSelect,
-    required this.onAdd,
-    required this.onDelete,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.all(12),
-          child: SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: onAdd,
-              icon:  const Icon(Icons.add),
-              label: const Text('New Deck'),
-              style: ElevatedButton.styleFrom(backgroundColor: primary),
-            ),
-          ),
-        ),
-        const Divider(height: 1),
-        Expanded(
-          child: decks.isEmpty
-              ? const EmptyStateMessage(
-                  icon:    Icons.folder_open,
-                  message: 'No presentations yet',
-                  color:   Colors.grey,
-                )
-              : ListView.builder(
-                  itemCount: decks.length,
-                  itemBuilder: (_, i) {
-                    final deck = decks[i];
-                    final sel  = selectedDeck?.id == deck.id;
-                    return ListTile(
-                      selected:          sel,
-                      selectedTileColor: primary.withValues(alpha: 0.10),
-                      leading: Icon(Icons.slideshow,
-                          color: sel ? primary : Colors.grey),
-                      title: Text(
-                        deck.name,
-                        style: TextStyle(
-                          fontWeight: sel
-                              ? FontWeight.bold
-                              : FontWeight.normal,
-                        ),
-                      ),
-                      subtitle: Text(
-                        '${deck.slideCount} slides',
-                        style: const TextStyle(fontSize: 11),
-                      ),
-                      onTap: () => onSelect(deck),
-                      trailing: IconButton(
-                        icon: const Icon(Icons.delete_outline,
-                            size: 18, color: Colors.red),
-                        onPressed: () => onDelete(deck),
-                      ),
-                    );
-                  },
-                ),
-        ),
-      ],
-    );
-  }
-}
-
-// ── SLIDE LIST PANEL ──────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// SLIDE LIST PANEL
+// ══════════════════════════════════════════════════════════════════════════════
 class _SlideListPanel extends StatelessWidget {
-  final Deck               deck;
-  final Slide?             selectedSlide;
-  final Color              primary;
-  final Color              secondary;
-  final ValueChanged<Slide>    onSelect;
-  final ValueChanged<String>   onAdd;
-  final ValueChanged<Slide>    onDelete;
-  final Function(int, int)     onReorder;
+  final Deck                            deck;
+  final Slide?                          selectedSlide;
+  final Color                           primary;
+  final Color                           secondary;
+  final ValueChanged<Slide>             onSelectSlide;
+  final ValueChanged<String>            onAddSlide;
+  final ValueChanged<Slide>             onDeleteSlide;
+  final Function(int, int)              onReorderSlides;
+  final ValueChanged<SongCollection>    onImportCollection;
+  final ValueChanged<String>            onToggleCollection;
+  final void Function(String, int)      onMoveCollection;
+  final ValueChanged<String>            onRemoveCollection;
+  final void Function(String, int, int) onReorderCollectionSlide;
+  final BuildContext                    importContext;
 
   const _SlideListPanel({
     required this.deck,
     required this.selectedSlide,
     required this.primary,
     required this.secondary,
-    required this.onSelect,
-    required this.onAdd,
-    required this.onDelete,
-    required this.onReorder,
+    required this.onSelectSlide,
+    required this.onAddSlide,
+    required this.onDeleteSlide,
+    required this.onReorderSlides,
+    required this.onImportCollection,
+    required this.onToggleCollection,
+    required this.onMoveCollection,
+    required this.onRemoveCollection,
+    required this.onReorderCollectionSlide,
+    required this.importContext,
   });
+
+  Future<void> _openImport() async {
+    final coll = await showSongSelectImport(
+        importContext, primary: primary, secondary: secondary);
+    if (coll != null) onImportCollection(coll);
+  }
 
   @override
   Widget build(BuildContext context) {
+    final items = SongCollectionStore.buildDisplayList(deck);
+
     return Column(
       children: [
-        // Add slide button
+        // ── Add Slide ──────────────────────────────────────────────────────
         Padding(
-          padding: const EdgeInsets.all(8),
+          padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
           child: PopupMenuButton<String>(
-            onSelected: onAdd,
+            onSelected: onAddSlide,
             itemBuilder: (_) => SlideDefaults.slideTypes
                 .map((t) => PopupMenuItem(
                       value: t,
@@ -219,34 +147,53 @@ class _SlideListPanel extends StatelessWidget {
                     ))
                 .toList(),
             child: Container(
-              width: double.infinity,
+              width:   double.infinity,
               padding: const EdgeInsets.symmetric(
                   vertical: 10, horizontal: 14),
               decoration: BoxDecoration(
                 color:        primary.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                    color: primary.withValues(alpha: 0.30)),
+                border:       Border.all(
+                    color: primary.withValues(alpha: 0.28)),
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Icon(Icons.add, color: primary, size: 18),
                   const SizedBox(width: 6),
-                  Text(
-                    'Add Slide',
-                    style: TextStyle(
-                      color:      primary,
-                      fontWeight: FontWeight.bold,
-                      fontSize:   13,
-                    ),
-                  ),
+                  Text('Add Slide',
+                      style: TextStyle(
+                          color:      primary,
+                          fontWeight: FontWeight.bold,
+                          fontSize:   13)),
                 ],
               ),
             ),
           ),
         ),
+
+        // ── Import Song (CCLI) ─────────────────────────────────────────────
+        Padding(
+          padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
+          child: SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _openImport,
+              icon:  Icon(Icons.music_note_rounded, color: primary, size: 16),
+              label: Text('Import Song (CCLI)',
+                  style: TextStyle(color: primary, fontSize: 12)),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 9),
+                side:    BorderSide(color: primary.withValues(alpha: 0.38)),
+                shape:   RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
+          ),
+        ),
         const Divider(height: 1),
+
+        // ── Slide / Collection list ────────────────────────────────────────
         Expanded(
           child: deck.slides.isEmpty
               ? const EmptyStateMessage(
@@ -254,20 +201,72 @@ class _SlideListPanel extends StatelessWidget {
                   message: 'No slides yet',
                   color:   Colors.grey,
                 )
-              : ReorderableListView.builder(
-                  itemCount: deck.slides.length,
-                  onReorder: onReorder,
+              : ListView.builder(
+                  padding:   const EdgeInsets.only(bottom: 20),
+                  itemCount: items.length,
                   itemBuilder: (_, i) {
-                    final s = deck.slides[i];
+                    final item = items[i];
+
+                    // ── song collection ──────────────────────────────────
+                    if (item.isCollection) {
+                      final coll =
+                          SongCollectionStore.find(item.collectionId);
+                      if (coll == null) return const SizedBox.shrink();
+                      return SongCollectionTile(
+                        key:            ValueKey('coll_${coll.id}'),
+                        collection:     coll,
+                        deck:           deck,
+                        primary:        primary,
+                        secondary:      secondary,
+                        selectedSlide:  selectedSlide,
+                        onSelectSlide:  onSelectSlide,
+                        onToggleExpand: () =>
+                            onToggleCollection(coll.id),
+                        onMoveGroup:    (d) =>
+                            onMoveCollection(coll.id, d),
+                        onRemove:       () =>
+                            onRemoveCollection(coll.id),
+                        onReorderSlide: (o, n) =>
+                            onReorderCollectionSlide(coll.id, o, n),
+                      );
+                    }
+
+                    // ── plain slide ──────────────────────────────────────
+                    final slide = deck.slides[item.deckIndex];
                     return Padding(
-                      key:     ValueKey(s.id),
+                      key:     ValueKey(slide.id),
                       padding: const EdgeInsets.symmetric(
                           horizontal: 8, vertical: 4),
-                      child: SlideThumbnail(
-                        slide:             s,
-                        selected:          selectedSlide?.id == s.id,
-                        selectedBorderColor: secondary,
-                        onTap: () => onSelect(s),
+                      child: Dismissible(
+                        key:       ValueKey('dis_${slide.id}'),
+                        direction: DismissDirection.endToStart,
+                        background: Container(
+                          alignment: Alignment.centerRight,
+                          padding:   const EdgeInsets.only(right: 16),
+                          decoration: BoxDecoration(
+                            color:        Colors.red,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Icon(Icons.delete_outline,
+                              color: Colors.white),
+                        ),
+                        onDismissed: (_) => onDeleteSlide(slide),
+                        child: _SlideTile(
+                          slide:      slide,
+                          selected:   selectedSlide?.id == slide.id,
+                          secondary:  secondary,
+                          onTap:      () => onSelectSlide(slide),
+                          onMoveUp:   item.deckIndex > 0
+                              ? () => onReorderSlides(
+                                    item.deckIndex, item.deckIndex - 1)
+                              : null,
+                          onMoveDown:
+                              item.deckIndex < deck.slides.length - 1
+                                  ? () => onReorderSlides(
+                                        item.deckIndex,
+                                        item.deckIndex + 2)
+                                  : null,
+                        ),
                       ),
                     );
                   },
@@ -278,50 +277,80 @@ class _SlideListPanel extends StatelessWidget {
   }
 }
 
-// ── EMPTY DECK PROMPT ─────────────────────────────────────────────────────────
-class _DeckEmptyPrompt extends StatelessWidget {
-  final Color              primary;
-  final Color              secondary;
-  final ValueChanged<String> onAdd;
+// ── individual slide tile ──────────────────────────────────────────────────────
+class _SlideTile extends StatelessWidget {
+  final Slide         slide;
+  final bool          selected;
+  final Color         secondary;
+  final VoidCallback  onTap;
+  final VoidCallback? onMoveUp;
+  final VoidCallback? onMoveDown;
 
-  const _DeckEmptyPrompt({
-    required this.primary,
+  const _SlideTile({
+    required this.slide,
+    required this.selected,
     required this.secondary,
-    required this.onAdd,
+    required this.onTap,
+    this.onMoveUp,
+    this.onMoveDown,
   });
 
   @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+  Widget build(BuildContext context) => Row(
         children: [
+          Expanded(
+            child: SlideThumbnail(
+              slide:               slide,
+              selected:            selected,
+              selectedBorderColor: secondary,
+              onTap:               onTap,
+            ),
+          ),
+          Column(mainAxisSize: MainAxisSize.min, children: [
+            if (onMoveUp   != null) _Arr(icon: Icons.arrow_upward_rounded,   onTap: onMoveUp!),
+            if (onMoveDown != null) _Arr(icon: Icons.arrow_downward_rounded, onTap: onMoveDown!),
+          ]),
+        ],
+      );
+}
+
+class _Arr extends StatelessWidget {
+  final IconData icon; final VoidCallback onTap;
+  const _Arr({required this.icon, required this.onTap});
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+        onTap: onTap,
+        child: Padding(padding: const EdgeInsets.all(3),
+            child: Icon(icon, size: 14, color: Colors.grey.shade400)));
+}
+
+// ── empty prompt ──────────────────────────────────────────────────────────────
+class _EmptyPrompt extends StatelessWidget {
+  final Color              primary;
+  final Color              secondary;
+  final ValueChanged<String> onAdd;
+  const _EmptyPrompt({required this.primary, required this.secondary,
+      required this.onAdd});
+
+  @override
+  Widget build(BuildContext context) => Center(
+        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
           Icon(Icons.add_photo_alternate_outlined,
               size: 64, color: primary.withValues(alpha: 0.40)),
           const SizedBox(height: 16),
-          Text(
-            'Add your first slide',
-            style: TextStyle(
-              fontSize: 18,
-              color:    primary.withValues(alpha: 0.70),
-            ),
-          ),
+          Text('Add your first slide',
+              style: TextStyle(fontSize: 18,
+                  color: primary.withValues(alpha: 0.70))),
           const SizedBox(height: 24),
-          Wrap(
-            spacing: 12, runSpacing: 12,
-            children: SlideDefaults.slideTypes.map((type) {
-              return ElevatedButton(
-                onPressed: () => onAdd(type),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: primary.withValues(alpha: 0.10),
-                  foregroundColor: primary,
-                ),
-                child: Text(SlideDefaults.typeLabel(type)),
-              );
-            }).toList(),
-          ),
-        ],
-      ),
-    );
-  }
+          Wrap(spacing: 12, runSpacing: 12,
+              children: SlideDefaults.slideTypes.map((type) =>
+                  ElevatedButton(
+                    onPressed: () => onAdd(type),
+                    style: ElevatedButton.styleFrom(
+                        backgroundColor: primary.withValues(alpha: 0.10),
+                        foregroundColor: primary),
+                    child: Text(SlideDefaults.typeLabel(type)),
+                  )).toList()),
+        ]),
+      );
 }

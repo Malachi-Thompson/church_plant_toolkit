@@ -1,5 +1,9 @@
 // lib/models/church_profile.dart
 import 'package:flutter/material.dart';
+// Add this import at the top of church_profile.dart
+import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/material.dart';
 
 class ChurchProfile {
   final String name;
@@ -204,3 +208,59 @@ const List<AppDefinition> availableApps = [
     category: 'Branding',
 ),
 ];
+// ── CHURCH LOGO WIDGET ────────────────────────────────────────────────────────
+class ChurchLogo extends StatelessWidget {
+  final String logoPath;
+  final Color  primary;
+  final Color  secondary;
+  final double size;
+  final double borderRadius;
+
+  const ChurchLogo({
+    super.key,
+    required this.logoPath,
+    required this.primary,
+    required this.secondary,
+    this.size         = 40,
+    this.borderRadius = 10,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final hasLogo = logoPath.isNotEmpty;
+
+    return Container(
+      width:  size,
+      height: size,
+      decoration: BoxDecoration(
+        color:        secondary.withValues(alpha: 0.20),
+        borderRadius: BorderRadius.circular(borderRadius),
+        border:       Border.all(
+          color: secondary.withValues(alpha: 0.50),
+          width: 1.5,
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: hasLogo
+          ? _logoImage()
+          : Icon(Icons.church, color: secondary, size: size * 0.55),
+    );
+  }
+
+  Widget _logoImage() {
+    if (kIsWeb) {
+      return Image.network(
+        logoPath,
+        fit:         BoxFit.cover,
+        errorBuilder: (_, __, ___) =>
+            Icon(Icons.church, color: secondary, size: size * 0.55),
+      );
+    }
+    return Image.file(
+      File(logoPath),
+      fit:         BoxFit.cover,
+      errorBuilder: (_, __, ___) =>
+          Icon(Icons.church, color: secondary, size: size * 0.55),
+    );
+  }
+}
