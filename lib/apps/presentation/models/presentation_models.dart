@@ -1,5 +1,6 @@
 // lib/apps/presentation/models/presentation_models.dart
 import 'package:flutter/material.dart';
+import 'slide_group.dart';
 
 // ── SLIDE STYLE ───────────────────────────────────────────────────────────────
 
@@ -333,16 +334,17 @@ class Slide {
 
 // ── DECK ──────────────────────────────────────────────────────────────────────
 class Deck {
-  final String  id;
-  String        name;
-  String        description; // optional subtitle shown on the home card
-  List<String>  tags;        // e.g. ['Sunday', 'Christmas', 'Youth']
-  bool          isTemplate;  // shown in a dedicated Templates section
-  bool          isPinned;    // floated to the top of regular decks
-  int           sortOrder;   // drag-to-reorder position (lower = first)
-  List<Slide>   slides;
-  DateTime      createdAt;
-  DateTime?     lastUsedAt;
+  final String     id;
+  String           name;
+  String           description;
+  List<String>     tags;
+  bool             isTemplate;
+  bool             isPinned;
+  int              sortOrder;
+  List<Slide>      slides;
+  List<SlideGroup> groups;        // ← named collections with optional auto-advance
+  DateTime         createdAt;
+  DateTime?        lastUsedAt;
 
   Deck({
     required this.id,
@@ -355,7 +357,8 @@ class Deck {
     this.isPinned    = false,
     this.sortOrder   = 0,
     this.lastUsedAt,
-  });
+    List<SlideGroup>? groups,
+  }) : groups = groups ?? [];
 
   int get slideCount => slides.length;
 
@@ -368,6 +371,7 @@ class Deck {
         'isPinned':    isPinned,
         'sortOrder':   sortOrder,
         'slides':      slides.map((s) => s.toJson()).toList(),
+        'groups':      groups.map((g) => g.toJson()).toList(),
         'createdAt':   createdAt.toIso8601String(),
         'lastUsedAt':  lastUsedAt?.toIso8601String(),
       };
@@ -381,6 +385,10 @@ class Deck {
         isPinned:    j['isPinned']    ?? false,
         sortOrder:   j['sortOrder']   ?? 0,
         slides:      (j['slides'] as List).map((s) => Slide.fromJson(s)).toList(),
+        groups:      (j['groups'] as List?)
+            ?.whereType<Map<String, dynamic>>()
+            .map(SlideGroup.fromJson)
+            .toList() ?? [],
         createdAt:   DateTime.parse(j['createdAt']),
         lastUsedAt:  j['lastUsedAt'] != null
             ? DateTime.tryParse(j['lastUsedAt'])

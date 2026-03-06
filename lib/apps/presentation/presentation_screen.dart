@@ -1,29 +1,20 @@
 // lib/apps/presentation/presentation_screen.dart
-//
-// Thin coordinator.  Owns all state and delegates UI to sub-files.
-// SongSelect collections are managed via SongCollectionStore.
-//
-// New in this version:
-//   • _collections Map<String, SongCollection> for fast lookup
-//   • _importCollection()  — insert a SongCollection into the open deck
-//   • _toggleCollection()  — expand / collapse in place
-//   • _moveCollection()    — shift the whole song block up or down
-//   • _removeCollection()  — delete slides + deregister collection
-//   • _reorderCollSlide()  — reorder a slide inside its collection
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../models/app_state.dart';
+import '../../models/church_profile.dart';
+import '../../services/bible_service.dart';
 import '../../theme.dart';
-import '../../models/church_profile.dart';a
 
 import 'models/presentation_models.dart';
 import 'models/presentation_service.dart';
 import 'models/slide_defaults.dart';
+import 'models/slide_group.dart';
 import 'dialogs/stream_setup_dialog.dart';
 import 'dialogs/record_setup_dialog.dart';
+import 'dialogs/verse_picker_dialog.dart';
 import 'widgets/presentation_widgets.dart';
 import 'views/presentations_home.dart';
 import 'views/deck_editor_view.dart';
@@ -38,10 +29,8 @@ class PresentationScreen extends StatefulWidget {
 }
 
 class _PresentationScreenState extends State<PresentationScreen> {
-  // ── services ──────────────────────────────────────────────────────────────
   final _service = PresentationService();
 
-  // ── core state ────────────────────────────────────────────────────────────
   List<Deck> _decks       = [];
   Deck?      _openDeck;
   Slide?     _selectedSlide;
@@ -78,7 +67,6 @@ class _PresentationScreenState extends State<PresentationScreen> {
   // ── deck management ───────────────────────────────────────────────────────
 
   void _createDeck() async {
-    // Prompt for a name immediately on creation
     final name = await _promptName(context, 'New Presentation');
     if (!mounted) return;
     final deck = Deck(
@@ -87,12 +75,11 @@ class _PresentationScreenState extends State<PresentationScreen> {
       slides:    [],
       createdAt: DateTime.now(),
     );
+    final maxOrder = _decks.isEmpty
+        ? -1
+        : _decks.map((d) => d.sortOrder).reduce((a, b) => a > b ? a : b);
+    deck.sortOrder = maxOrder + 1;
     setState(() {
-      // assign a sortOrder one higher than the current max
-      final maxOrder = _decks.isEmpty
-          ? -1
-          : _decks.map((d) => d.sortOrder).reduce((a, b) => a > b ? a : b);
-      deck.sortOrder = maxOrder + 1;
       _decks.insert(0, deck);
       _openDeck      = deck;
       _selectedSlide = null;
@@ -100,8 +87,6 @@ class _PresentationScreenState extends State<PresentationScreen> {
     _service.saveDecks(_decks);
   }
 
-  /// Shows a simple dialog that lets the user type a name.
-  /// Returns null if they cancel.
   Future<String?> _promptName(BuildContext ctx, String initial) async {
     final ctrl = TextEditingController(text: initial);
     final result = await showDialog<String>(
@@ -109,11 +94,12 @@ class _PresentationScreenState extends State<PresentationScreen> {
       builder: (dctx) => AlertDialog(
         title: const Text('Name your presentation'),
         content: TextField(
-          controller:  ctrl,
-          autofocus:   true,
-          decoration:  const InputDecoration(
-              labelText: 'Presentation name',
-              border:    OutlineInputBorder()),
+          controller:         ctrl,
+          autofocus:          true,
+          decoration: const InputDecoration(
+            labelText: 'Presentation name',
+            border:    OutlineInputBorder(),
+          ),
           textCapitalization: TextCapitalization.words,
           onSubmitted: (v) => Navigator.pop(dctx, v.trim()),
         ),
@@ -151,11 +137,10 @@ class _PresentationScreenState extends State<PresentationScreen> {
               onPressed: () => Navigator.pop(ctx, false),
               child: const Text('Cancel')),
           ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Delete',
-                style: TextStyle(color: Colors.white)),
-          ),
+              onPressed: () => Navigator.pop(ctx, true),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+              child: const Text('Delete',
+                  style: TextStyle(color: Colors.white))),
         ],
       ),
     );
@@ -167,6 +152,13 @@ class _PresentationScreenState extends State<PresentationScreen> {
         _selectedSlide = null;
       }
     });
+    _service.saveDecks(_decks);
+  }
+
+  Future<void> _renameDeck(Deck deck) async {
+    final newName = await showRenameDeckDialog(context, deck.name);
+    if (newName == null || newName == deck.name) return;
+    setState(() => deck.name = newName);
     _service.saveDecks(_decks);
   }
 
@@ -191,16 +183,10 @@ class _PresentationScreenState extends State<PresentationScreen> {
                 style:     s.style,
               ))
           .toList(),
+      // Groups are not copied — slide IDs would differ
     );
     final idx = _decks.indexOf(deck);
     setState(() => _decks.insert(idx + 1, copy));
-    _service.saveDecks(_decks);
-  }
-
-  void _onDeckChanged(Deck deck) {
-    // deck is mutated in place by the home screen / edit-details sheet;
-    // we just need to persist and rebuild
-    setState(() {});
     _service.saveDecks(_decks);
   }
 
@@ -225,6 +211,12 @@ class _PresentationScreenState extends State<PresentationScreen> {
   }
 
   void _deleteSlide(Slide slide) {
+    // Also remove from any groups
+    if (_openDeck != null) {
+      for (final g in _openDeck!.groups) {
+        g.slideIds.remove(slide.id);
+      }
+    }
     setState(() {
       _openDeck?.slides.remove(slide);
       if (_selectedSlide?.id == slide.id) _selectedSlide = null;
@@ -240,13 +232,73 @@ class _PresentationScreenState extends State<PresentationScreen> {
     setState(() {});
   }
 
+  // ── slide group management ────────────────────────────────────────────────
+
+  void _createGroup(SlideGroup group) {
+    if (_openDeck == null) return;
+    setState(() => _openDeck!.groups.add(group));
+    _service.saveDecks(_decks);
+  }
+
+  void _updateGroup(SlideGroup updated) {
+    if (_openDeck == null) return;
+    final idx = _openDeck!.groups.indexWhere((g) => g.id == updated.id);
+    if (idx < 0) return;
+    setState(() => _openDeck!.groups[idx] = updated);
+    _service.saveDecks(_decks);
+  }
+
+  void _deleteGroup(String groupId) {
+    if (_openDeck == null) return;
+    setState(() =>
+        _openDeck!.groups.removeWhere((g) => g.id == groupId));
+    _service.saveDecks(_decks);
+  }
+
+  void _addSlideToGroup(String groupId, String slideId) {
+    if (_openDeck == null) return;
+    final group = _openDeck!.groups.firstWhere((g) => g.id == groupId,
+        orElse: () => throw StateError('Group not found'));
+    if (group.slideIds.contains(slideId)) return;
+    setState(() => group.slideIds.add(slideId));
+    _service.saveDecks(_decks);
+  }
+
+  void _removeSlideFromGroup(String groupId, String slideId) {
+    if (_openDeck == null) return;
+    final group = _openDeck!.groups.firstWhere((g) => g.id == groupId,
+        orElse: () => throw StateError('Group not found'));
+    setState(() => group.slideIds.remove(slideId));
+    _service.saveDecks(_decks);
+  }
+
+  // ── scripture import ──────────────────────────────────────────────────────
+
+  Future<void> _handleImportScripture() async {
+    if (_openDeck == null || !mounted) return;
+    final state     = context.read<AppState>();
+    final primary   = state.brandPrimary;
+    final secondary = state.brandSecondary;
+
+    final slide = await showVersePickerDialog(
+      context,
+      primary:   primary,
+      secondary: secondary,
+    );
+    if (slide != null && mounted && _openDeck != null) {
+      setState(() {
+        _openDeck!.slides.add(slide);
+        _selectedSlide = slide;
+      });
+      _service.saveDecks(_decks);
+    }
+  }
+
   // ── song collection management ────────────────────────────────────────────
 
   void _importCollection(SongCollection collection) {
     if (_openDeck == null) return;
-    setState(() {
-      SongCollectionStore.insertIntoDeck(collection, _openDeck!);
-    });
+    setState(() => SongCollectionStore.insertIntoDeck(collection, _openDeck!));
     _saveAll();
   }
 
@@ -257,12 +309,9 @@ class _PresentationScreenState extends State<PresentationScreen> {
     SongCollectionStore.saveAll();
   }
 
-  /// [delta] is -1 (up) or +1 (down).
   void _moveCollection(String collId, int delta) {
     if (_openDeck == null) return;
     final deck = _openDeck!;
-
-    // Find the current first index of the collection's slides
     int firstIdx = -1;
     for (var i = 0; i < deck.slides.length; i++) {
       if (_collIdOfSlide(deck.slides[i]) == collId) {
@@ -271,17 +320,11 @@ class _PresentationScreenState extends State<PresentationScreen> {
       }
     }
     if (firstIdx < 0) return;
-
-    final coll       = SongCollectionStore.find(collId);
-    final groupSize  = coll?.slides.length ?? 0;
-    final newFirst   = firstIdx + delta;
-
-    // Don't go out of bounds
+    final coll      = SongCollectionStore.find(collId);
+    final groupSize = coll?.slides.length ?? 0;
+    final newFirst  = firstIdx + delta;
     if (newFirst < 0 || newFirst + groupSize > deck.slides.length) return;
-
-    setState(() {
-      SongCollectionStore.moveInDeck(collId, deck, newFirst);
-    });
+    setState(() => SongCollectionStore.moveInDeck(collId, deck, newFirst));
     _saveAll();
   }
 
@@ -305,14 +348,12 @@ class _PresentationScreenState extends State<PresentationScreen> {
 
   void _reorderCollSlide(String collId, int oldIdx, int newIdx) {
     if (_openDeck == null) return;
-    setState(() {
-      SongCollectionStore.reorderSlideInDeck(
-          collId, _openDeck!, oldIdx, newIdx);
-    });
+    setState(() => SongCollectionStore.reorderSlideInDeck(
+        collId, _openDeck!, oldIdx, newIdx));
     _saveAll();
   }
 
-  // ── stream / record toggles ───────────────────────────────────────────────
+  // ── stream / record ───────────────────────────────────────────────────────
 
   Future<void> _handleToggleStream() async {
     if (_isStreaming) {
@@ -320,18 +361,16 @@ class _PresentationScreenState extends State<PresentationScreen> {
         context: context,
         builder: (ctx) => AlertDialog(
           title:   const Text('Stop Live Stream?'),
-          content: const Text(
-              'This will end your live stream. Viewers will see the stream as ended.'),
+          content: const Text('This will end your live stream.'),
           actions: [
             TextButton(
                 onPressed: () => Navigator.pop(ctx, false),
                 child: const Text('Cancel')),
             ElevatedButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-              child: const Text('Stop Stream',
-                  style: TextStyle(color: Colors.white)),
-            ),
+                onPressed: () => Navigator.pop(ctx, true),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                child: const Text('Stop Stream',
+                    style: TextStyle(color: Colors.white))),
           ],
         ),
       );
@@ -375,11 +414,10 @@ class _PresentationScreenState extends State<PresentationScreen> {
                 onPressed: () => Navigator.pop(ctx, false),
                 child: const Text('Cancel')),
             ElevatedButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-              child: const Text('Stop Recording',
-                  style: TextStyle(color: Colors.white)),
-            ),
+                onPressed: () => Navigator.pop(ctx, true),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                child: const Text('Stop Recording',
+                    style: TextStyle(color: Colors.white))),
           ],
         ),
       );
@@ -388,7 +426,8 @@ class _PresentationScreenState extends State<PresentationScreen> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content: Text(
-                '⏹ Recording saved to ${_recordSettings.savePath.isNotEmpty ? _recordSettings.savePath : 'default folder'}'),
+                '⏹ Recording saved to '
+                '${_recordSettings.savePath.isNotEmpty ? _recordSettings.savePath : 'default folder'}'),
             backgroundColor: Colors.blueGrey,
             behavior:        SnackBarBehavior.floating,
             duration:        const Duration(seconds: 5),
@@ -420,7 +459,6 @@ class _PresentationScreenState extends State<PresentationScreen> {
     final secondary = state.brandSecondary;
     final profile   = state.churchProfile;
 
-    // Full-screen present mode
     if (_presenting && _openDeck != null) {
       return PresentView(
         deck:           _openDeck!,
@@ -440,8 +478,8 @@ class _PresentationScreenState extends State<PresentationScreen> {
         foregroundColor: contrastOn(primary),
         leading: _openDeck != null
             ? IconButton(
-                icon:    const Icon(Icons.arrow_back),
-                tooltip: 'All Presentations',
+                icon:      const Icon(Icons.arrow_back),
+                tooltip:   'All Presentations',
                 onPressed: () => setState(() {
                   _openDeck      = null;
                   _selectedSlide = null;
@@ -460,23 +498,26 @@ class _PresentationScreenState extends State<PresentationScreen> {
               ),
             if (profile != null) const SizedBox(width: 10),
             if (_openDeck != null)
-              // tappable name → inline rename
               GestureDetector(
                 onTap: () async {
-                  final newName = await _promptName(context, _openDeck!.name);
+                  final newName =
+                      await _promptName(context, _openDeck!.name);
                   if (newName != null && newName != _openDeck!.name) {
-                    _openDeck!.name = newName;
-                    _onDeckChanged(_openDeck!);
+                    setState(() => _openDeck!.name = newName);
+                    _service.saveDecks(_decks);
                   }
                 },
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(_openDeck!.name,
-                        style: const TextStyle(fontWeight: FontWeight.bold)),
+                        style: const TextStyle(
+                            fontWeight: FontWeight.bold)),
                     const SizedBox(width: 6),
                     Icon(Icons.edit_rounded,
-                        size: 15, color: contrastOn(primary).withValues(alpha: 0.60)),
+                        size:  15,
+                        color: contrastOn(primary)
+                            .withValues(alpha: 0.60)),
                   ],
                 ),
               )
@@ -505,8 +546,8 @@ class _PresentationScreenState extends State<PresentationScreen> {
             ),
           if (_openDeck == null)
             IconButton(
-              icon:    const Icon(Icons.add),
-              tooltip: 'New Presentation',
+              icon:      const Icon(Icons.add),
+              tooltip:   'New Presentation',
               onPressed: _createDeck,
             ),
         ],
@@ -519,26 +560,32 @@ class _PresentationScreenState extends State<PresentationScreen> {
               onOpenDeck:      _openDeckForEditing,
               onNewDeck:       _createDeck,
               onDeleteDeck:    _deleteDeck,
-              onDeckChanged:   _onDeckChanged,
+              onRenameDeck:    _renameDeck,
               onDuplicateDeck: _duplicateDeck,
             )
           : DeckEditorView(
-              deck:           _openDeck!,
-              selectedSlide:  _selectedSlide,
-              primary:        primary,
-              secondary:      secondary,
-              onSelectSlide:  (s) => setState(() => _selectedSlide = s),
-              onAddSlide:     (t) => _addSlide(t, primary),
-              onDeleteSlide:   _deleteSlide,
-              onReorderSlides: _reorderSlides,
+              deck:                    _openDeck!,
+              selectedSlide:           _selectedSlide,
+              primary:                 primary,
+              secondary:               secondary,
+              onSelectSlide:           (s) => setState(() => _selectedSlide = s),
+              onAddSlide:              (t) => _addSlide(t, primary),
+              onDeleteSlide:           _deleteSlide,
+              onReorderSlides:         _reorderSlides,
               onSlideChanged: () {
                 _service.saveDecks(_decks);
                 setState(() {});
               },
-              onImportCollection:       _importCollection,
-              onToggleCollection:       _toggleCollection,
-              onMoveCollection:         _moveCollection,
-              onRemoveCollection:       _removeCollection,
+              onImportScripture:       _handleImportScripture,
+              onCreateGroup:           _createGroup,
+              onUpdateGroup:           _updateGroup,
+              onDeleteGroup:           _deleteGroup,
+              onAddSlideToGroup:       _addSlideToGroup,
+              onRemoveSlideFromGroup:  _removeSlideFromGroup,
+              onImportCollection:      _importCollection,
+              onToggleCollection:      _toggleCollection,
+              onMoveCollection:        _moveCollection,
+              onRemoveCollection:      _removeCollection,
               onReorderCollectionSlide: _reorderCollSlide,
             ),
     );
