@@ -337,63 +337,85 @@ class Deck {
   final String     id;
   String           name;
   String           description;
+  String           author;
+  String           notes;
+  DateTime?        serviceDate;
   List<String>     tags;
   bool             isTemplate;
   bool             isPinned;
   int              sortOrder;
   List<Slide>      slides;
-  List<SlideGroup> groups;        // ← named collections with optional auto-advance
+  List<SlideGroup> groups;
   DateTime         createdAt;
   DateTime?        lastUsedAt;
+  DateTime?        lastModifiedAt;
+  String?          filePath;
 
   Deck({
     required this.id,
     required this.name,
     required this.slides,
     required this.createdAt,
-    this.description = '',
-    List<String>?    tags,
-    this.isTemplate  = false,
-    this.isPinned    = false,
-    this.sortOrder   = 0,
+    this.description    = '',
+    this.author         = '',
+    this.notes          = '',
+    this.serviceDate,
+    List<String>?       tags,
+    this.isTemplate     = false,
+    this.isPinned       = false,
+    this.sortOrder      = 0,
     this.lastUsedAt,
-    List<SlideGroup>? groups,
+    this.lastModifiedAt,
+    this.filePath,
+    List<SlideGroup>?   groups,
   }) : tags   = tags   ?? [],
        groups = groups ?? [];
 
   int get slideCount => slides.length;
 
+  static String safeFileName(String name) =>
+      name.replaceAll(RegExp(r'[<>:"/\\|?*\x00-\x1F]'), '_').trim();
+
   Map<String, dynamic> toJson() => {
-        'id':          id,
-        'name':        name,
-        'description': description,
-        'tags':        tags,
-        'isTemplate':  isTemplate,
-        'isPinned':    isPinned,
-        'sortOrder':   sortOrder,
-        'slides':      slides.map((s) => s.toJson()).toList(),
-        'groups':      groups.map((g) => g.toJson()).toList(),
-        'createdAt':   createdAt.toIso8601String(),
-        'lastUsedAt':  lastUsedAt?.toIso8601String(),
+        'id':             id,
+        'name':           name,
+        'description':    description,
+        'author':         author,
+        'notes':          notes,
+        'serviceDate':    serviceDate?.toIso8601String(),
+        'tags':           tags,
+        'isTemplate':     isTemplate,
+        'isPinned':       isPinned,
+        'sortOrder':      sortOrder,
+        'slides':         slides.map((s) => s.toJson()).toList(),
+        'groups':         groups.map((g) => g.toJson()).toList(),
+        'createdAt':      createdAt.toIso8601String(),
+        'lastUsedAt':     lastUsedAt?.toIso8601String(),
+        'lastModifiedAt': lastModifiedAt?.toIso8601String(),
       };
 
   factory Deck.fromJson(Map<String, dynamic> j) => Deck(
-        id:          j['id'],
-        name:        j['name'],
-        description: j['description'] ?? '',
-        tags:        List<String>.from(j['tags'] ?? []),
-        isTemplate:  j['isTemplate']  ?? false,
-        isPinned:    j['isPinned']    ?? false,
-        sortOrder:   j['sortOrder']   ?? 0,
-        slides:      (j['slides'] as List).map((s) => Slide.fromJson(s)).toList(),
-        groups:      (j['groups'] as List?)
+        id:             j['id'],
+        name:           j['name'],
+        description:    j['description']    ?? '',
+        author:         j['author']         ?? '',
+        notes:          j['notes']          ?? '',
+        serviceDate:    j['serviceDate'] != null
+            ? DateTime.tryParse(j['serviceDate']) : null,
+        tags:           List<String>.from(j['tags'] ?? []),
+        isTemplate:     j['isTemplate']     ?? false,
+        isPinned:       j['isPinned']       ?? false,
+        sortOrder:      j['sortOrder']      ?? 0,
+        slides:         (j['slides'] as List).map((s) => Slide.fromJson(s)).toList(),
+        groups:         (j['groups'] as List?)
             ?.whereType<Map<String, dynamic>>()
             .map(SlideGroup.fromJson)
             .toList() ?? [],
-        createdAt:   DateTime.parse(j['createdAt']),
-        lastUsedAt:  j['lastUsedAt'] != null
-            ? DateTime.tryParse(j['lastUsedAt'])
-            : null,
+        createdAt:      DateTime.parse(j['createdAt']),
+        lastUsedAt:     j['lastUsedAt'] != null
+            ? DateTime.tryParse(j['lastUsedAt']) : null,
+        lastModifiedAt: j['lastModifiedAt'] != null
+            ? DateTime.tryParse(j['lastModifiedAt']) : null,
       );
 }
 
