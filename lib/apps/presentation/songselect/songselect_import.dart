@@ -7,23 +7,13 @@
 //   • SongCollectionStore     — persistence of collections + deck wiring helpers
 //   • showSongSelectImport()  — bottom-sheet: search → select sections → import
 //   • SongCollectionTile      — widget for _SlideListPanel (collapsed/expanded)
-//
-// Integration steps (deck_editor_view.dart):
-//   1. import 'songselect/songselect_import.dart';
-//   2. Add `onImportSong` callback to _SlideListPanel + DeckEditorView
-//   3. In presentation_screen.dart: call showSongSelectImport() and then
-//      SongCollectionStore.insertIntoDecks(_decks, collection, deck)
-//   4. Replace the plain slide tiles in _SlideListPanel with
-//      SongCollectionTile for any slide whose collectionId is set,
-//      or keep the existing SlideThumbnail for normal slides.
-//
-// See bottom of this file for a drop-in _SlideListPanel replacement.
 // ────────────────────────────────────────────────────────────────────────────
 
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../models/presentation_models.dart';
@@ -37,17 +27,12 @@ import '../../../theme.dart';
 ///
 /// In a [Deck], every slide that belongs to this collection stores its
 /// [id] in [Slide.reference] as `"coll:<collectionId>|<sectionLabel>"`.
-/// That lets us reconstruct which slides belong together after serialisation
-/// without changing the existing [Slide] / [Deck] models.
 class SongCollection {
   final String id;
   String       songTitle;
   String       artist;
   String       ccliNumber;
   bool         isExpanded;
-
-  /// The ordered list of slides as they appear in this collection.
-  /// This is the *canonical* order; the deck may also contain them.
   List<Slide>  slides;
 
   SongCollection({
@@ -59,7 +44,6 @@ class SongCollection {
     this.isExpanded = true,
   });
 
-  // ── Serialisation ──────────────────────────────────────────────────────────
   Map<String, dynamic> toJson() => {
         'id':         id,
         'songTitle':  songTitle,
@@ -69,8 +53,6 @@ class SongCollection {
         'slideIds':   slides.map((s) => s.id).toList(),
       };
 
-  /// Rehydrate a collection from JSON + the full slide list of the deck it
-  /// belongs to (so we don't duplicate slide data).
   static SongCollection fromJson(
     Map<String, dynamic> j,
     List<Slide> allSlides,
@@ -123,45 +105,57 @@ String _originalRef(Slide slide) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 2.  COLLECTION STORE  (persistence + deck-mutation helpers)
+// 2.  COLLECTION STORE  (file-based persistence + deck-mutation helpers)
 // ══════════════════════════════════════════════════════════════════════════════
 
 class SongCollectionStore {
-  static const _prefsKey = 'presentation_song_collections';
+  static const _fileName = 'presentation_song_collections.json';
 
   // ── In-memory registry (collectionId → SongCollection) ────────────────────
   static final Map<String, SongCollection> _registry = {};
 
   static SongCollection? find(String id) => _registry[id];
 
+  // ── File helpers ───────────────────────────────────────────────────────────
+
+  static Future<File> _file() async {
+    final dir = await getApplicationDocumentsDirectory();
+    return File('${dir.path}/$_fileName');
+  }
+
   // ── Persistence ────────────────────────────────────────────────────────────
 
   static Future<void> loadAll(List<Deck> decks) async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw   = prefs.getString(_prefsKey);
-    if (raw == null) return;
-    final list = jsonDecode(raw) as List;
-    _registry.clear();
-    for (final j in list) {
-      // Find the deck whose slides contain this collection's slides
-      final allSlides = decks.expand((d) => d.slides).toList();
-      final coll      = SongCollection.fromJson(j, allSlides);
-      _registry[coll.id] = coll;
+    try {
+      final f = await _file();
+      if (!await f.exists()) return;
+      final raw = await f.readAsString();
+      if (raw.trim().isEmpty) return;
+      final list = jsonDecode(raw) as List;
+      _registry.clear();
+      for (final j in list) {
+        final allSlides = decks.expand((d) => d.slides).toList();
+        final coll      = SongCollection.fromJson(j, allSlides);
+        _registry[coll.id] = coll;
+      }
+    } catch (_) {
+      // Corrupt or missing file — start with empty registry
     }
   }
 
   static Future<void> saveAll() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-      _prefsKey,
-      jsonEncode(_registry.values.map((c) => c.toJson()).toList()),
-    );
+    try {
+      final f   = await _file();
+      final tmp = File('${f.path}.tmp');
+      await tmp.writeAsString(
+          jsonEncode(_registry.values.map((c) => c.toJson()).toList()));
+      await tmp.rename(f.path);
+    } catch (_) {}
   }
 
   // ── Deck-mutation helpers ──────────────────────────────────────────────────
 
   /// Insert [collection]'s slides into [deck] at optional [atIndex].
-  /// Tags each slide's reference so they can be re-grouped later.
   static void insertIntoDeck(
     SongCollection collection,
     Deck deck, {
@@ -207,16 +201,16 @@ class SongCollectionStore {
     }
     if (oldGroupIdx >= allIdxs.length || newGroupIdx >= allIdxs.length) return;
 
-    // Swap in the deck list
     final fromIdx = allIdxs[oldGroupIdx];
     final toIdx   = allIdxs[newGroupIdx];
     final tmp     = deck.slides[fromIdx];
     deck.slides[fromIdx] = deck.slides[toIdx];
     deck.slides[toIdx]   = tmp;
 
-    // Mirror in the collection's own slide list
     final coll = _registry[collectionId];
-    if (coll != null && oldGroupIdx < coll.slides.length && newGroupIdx < coll.slides.length) {
+    if (coll != null &&
+        oldGroupIdx < coll.slides.length &&
+        newGroupIdx < coll.slides.length) {
       final ts = coll.slides.removeAt(oldGroupIdx);
       coll.slides.insert(newGroupIdx, ts);
     }
@@ -224,9 +218,6 @@ class SongCollectionStore {
 
   // ── Query helpers ──────────────────────────────────────────────────────────
 
-  /// Returns a list of items to display in the slide list panel.
-  /// Each item is either a [_CollectionHeader] (first slide of a group) or
-  /// a bare [Slide] index.
   static List<_SlideListItem> buildDisplayList(Deck deck) {
     final items = <_SlideListItem>[];
     final seen  = <String>{};
@@ -240,8 +231,6 @@ class SongCollectionStore {
           seen.add(cid);
           items.add(_SlideListItem.collection(cid, i));
         }
-        // individual slides within the collection are rendered by
-        // SongCollectionTile when it is expanded — not as top-level items.
       } else {
         items.add(_SlideListItem.plain(i));
       }
@@ -253,8 +242,8 @@ class SongCollectionStore {
 /// Discriminated union used by [SongCollectionStore.buildDisplayList].
 class _SlideListItem {
   final bool   isCollection;
-  final String collectionId;   // only when isCollection
-  final int    deckIndex;      // index of the first slide in deck.slides
+  final String collectionId;
+  final int    deckIndex;
 
   const _SlideListItem._({
     required this.isCollection,
@@ -330,7 +319,7 @@ class _SongDetail {
   final String                    title;
   final String                    artist;
   final String                    ccliNumber;
-  final List<Map<String, String>> sections; // [{label, text}]
+  final List<Map<String, String>> sections;
 
   const _SongDetail({
     required this.title,
@@ -342,8 +331,8 @@ class _SongDetail {
   factory _SongDetail.fromJson(Map<String, dynamic> j) {
     final raw = (j['sections'] ?? j['lyrics'] ?? []) as List;
     return _SongDetail(
-      title:      j['title']                        ?? '',
-      artist:     j['author'] ?? j['artist']        ?? '',
+      title:      j['title']                  ?? '',
+      artist:     j['author'] ?? j['artist']  ?? '',
       ccliNumber: (j['ccliNumber'] ?? '').toString(),
       sections:   raw.map<Map<String, String>>((s) => {
         'label': (s['label'] ?? s['type']    ?? 'Section').toString(),
@@ -354,7 +343,7 @@ class _SongDetail {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 4.  CREDENTIAL SETTINGS
+// 4.  CREDENTIAL SETTINGS  (also migrated to file-based storage)
 // ══════════════════════════════════════════════════════════════════════════════
 
 class SongSelectCredentials {
@@ -365,21 +354,33 @@ class SongSelectCredentials {
 
   bool get isConfigured => apiKey.isNotEmpty;
 
+  static Future<File> _file() async {
+    final dir = await getApplicationDocumentsDirectory();
+    return File('${dir.path}/ccli_credentials.json');
+  }
+
   static Future<SongSelectCredentials> load() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw   = prefs.getString('ccli_credentials');
-    if (raw == null) return SongSelectCredentials();
-    final j = jsonDecode(raw);
-    return SongSelectCredentials(
-      apiKey:        j['apiKey']        ?? '',
-      licenseNumber: j['licenseNumber'] ?? '',
-    );
+    try {
+      final f = await _file();
+      if (!await f.exists()) return SongSelectCredentials();
+      final raw = await f.readAsString();
+      if (raw.trim().isEmpty) return SongSelectCredentials();
+      final j = jsonDecode(raw);
+      return SongSelectCredentials(
+        apiKey:        j['apiKey']        ?? '',
+        licenseNumber: j['licenseNumber'] ?? '',
+      );
+    } catch (_) {
+      return SongSelectCredentials();
+    }
   }
 
   Future<void> save() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('ccli_credentials',
-        jsonEncode({'apiKey': apiKey, 'licenseNumber': licenseNumber}));
+    try {
+      final f = await _file();
+      await f.writeAsString(
+          jsonEncode({'apiKey': apiKey, 'licenseNumber': licenseNumber}));
+    } catch (_) {}
   }
 }
 
@@ -387,8 +388,6 @@ class SongSelectCredentials {
 // 5.  IMPORT BOTTOM-SHEET
 // ══════════════════════════════════════════════════════════════════════════════
 
-/// Open the SongSelect import sheet. Returns a [SongCollection] if the user
-/// completes an import, or `null` if they cancel.
 Future<SongCollection?> showSongSelectImport(
   BuildContext context, {
   required Color primary,
@@ -422,21 +421,17 @@ class SongSelectImportSheet extends StatefulWidget {
 enum _SheetPage { search, lyrics, settings }
 
 class _SongSelectImportSheetState extends State<SongSelectImportSheet> {
-  // ── navigation ─────────────────────────────────────────────────────────────
   _SheetPage _page = _SheetPage.search;
 
-  // ── credentials ────────────────────────────────────────────────────────────
   SongSelectCredentials _creds = SongSelectCredentials();
-  final _apiKeyCtrl    = TextEditingController();
-  final _licenseCtrl   = TextEditingController();
+  final _apiKeyCtrl  = TextEditingController();
+  final _licenseCtrl = TextEditingController();
 
-  // ── search ─────────────────────────────────────────────────────────────────
-  final _searchCtrl    = TextEditingController();
-  List<_SongResult> _results        = [];
+  final _searchCtrl   = TextEditingController();
+  List<_SongResult> _results       = [];
   bool              _loadingSearch  = false;
   String            _searchError    = '';
 
-  // ── lyrics ─────────────────────────────────────────────────────────────────
   _SongResult?  _selected;
   _SongDetail?  _detail;
   bool          _loadingLyrics = false;
@@ -468,7 +463,7 @@ class _SongSelectImportSheetState extends State<SongSelectImportSheet> {
     _creds.apiKey        = _apiKeyCtrl.text.trim();
     _creds.licenseNumber = _licenseCtrl.text.trim();
     await _creds.save();
-    setState(() { _page = _SheetPage.search; });
+    setState(() => _page = _SheetPage.search);
   }
 
   Future<void> _search() async {
@@ -513,9 +508,9 @@ class _SongSelectImportSheetState extends State<SongSelectImportSheet> {
   }
 
   SongCollection _buildCollection() {
-    final d   = _detail!;
-    final bg  = Color.lerp(widget.primary, Colors.black, 0.45)!;
-    final fg  = contrastOn(bg);
+    final d  = _detail!;
+    final bg = Color.lerp(widget.primary, Colors.black, 0.45)!;
+    final fg = contrastOn(bg);
 
     final sections = d.sections.asMap().entries
         .where((e) => _included.contains(e.key))
@@ -541,7 +536,6 @@ class _SongSelectImportSheetState extends State<SongSelectImportSheet> {
     );
   }
 
-  // ── BUILD ──────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     final p  = widget.primary;
@@ -554,51 +548,43 @@ class _SongSelectImportSheetState extends State<SongSelectImportSheet> {
         borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
         boxShadow: [
           BoxShadow(
-              color: Colors.black.withValues(alpha: 0.15),
+              color:      Colors.black.withValues(alpha: 0.15),
               blurRadius: 24,
-              offset: const Offset(0, -4))
+              offset:     const Offset(0, -4))
         ],
       ),
       child: Column(
         children: [
-          // ── drag handle ──────────────────────────────────────────────────
           _DragHandle(),
-          // ── header ───────────────────────────────────────────────────────
           _SheetHeader(
-            primary:      p,
-            page:         _page,
-            selected:     _selected,
-            onSettings:   () => setState(() => _page = _SheetPage.settings),
-            onBack:       () => setState(() {
-              if (_page == _SheetPage.lyrics) {
-                _page = _SheetPage.search;
-              } else if (_page == _SheetPage.settings) {
-                _page = _SheetPage.search;
-              }
+            primary:    p,
+            page:       _page,
+            selected:   _selected,
+            onSettings: () => setState(() => _page = _SheetPage.settings),
+            onBack: () => setState(() {
+              _page = _SheetPage.search;
             }),
-            onClose:      () => Navigator.pop(context),
+            onClose: () => Navigator.pop(context),
           ),
           const Divider(height: 1),
-
-          // ── body ─────────────────────────────────────────────────────────
           Expanded(
             child: AnimatedSwitcher(
               duration: const Duration(milliseconds: 220),
               child: switch (_page) {
                 _SheetPage.settings => _SettingsPanel(
-                    key:          const ValueKey('settings'),
-                    primary:      p,
-                    apiKeyCtrl:   _apiKeyCtrl,
-                    licenseCtrl:  _licenseCtrl,
-                    onSave:       _saveCreds,
+                    key:         const ValueKey('settings'),
+                    primary:     p,
+                    apiKeyCtrl:  _apiKeyCtrl,
+                    licenseCtrl: _licenseCtrl,
+                    onSave:      _saveCreds,
                   ),
-                _SheetPage.lyrics   => _LyricsPanel(
-                    key:          const ValueKey('lyrics'),
-                    primary:      p,
-                    detail:       _detail,
-                    loading:      _loadingLyrics,
-                    error:        _lyricsError,
-                    included:     _included,
+                _SheetPage.lyrics => _LyricsPanel(
+                    key:           const ValueKey('lyrics'),
+                    primary:       p,
+                    detail:        _detail,
+                    loading:       _loadingLyrics,
+                    error:         _lyricsError,
+                    included:      _included,
                     onToggle: (i, v) => setState(() {
                       if (v) _included.add(i); else _included.remove(i);
                     }),
@@ -608,7 +594,7 @@ class _SongSelectImportSheetState extends State<SongSelectImportSheet> {
                         _included.clear();
                       } else {
                         _included = Set.from(
-                          List.generate(_detail!.sections.length, (i) => i));
+                            List.generate(_detail!.sections.length, (i) => i));
                       }
                     }),
                     onReorder: (o, n) => setState(() {
@@ -625,20 +611,19 @@ class _SongSelectImportSheetState extends State<SongSelectImportSheet> {
                         }),
                       );
                     }),
-                    onImport: () =>
-                        Navigator.pop(context, _buildCollection()),
+                    onImport:      () => Navigator.pop(context, _buildCollection()),
                     includedCount: _included.length,
                   ),
-                _SheetPage.search   => _SearchPanel(
-                    key:           const ValueKey('search'),
-                    primary:       p,
-                    searchCtrl:    _searchCtrl,
-                    results:       _results,
-                    loading:       _loadingSearch,
-                    error:         _searchError,
-                    configured:    _creds.isConfigured,
-                    onSearch:      _search,
-                    onPickSong:    _pickSong,
+                _SheetPage.search => _SearchPanel(
+                    key:        const ValueKey('search'),
+                    primary:    p,
+                    searchCtrl: _searchCtrl,
+                    results:    _results,
+                    loading:    _loadingSearch,
+                    error:      _searchError,
+                    configured: _creds.isConfigured,
+                    onSearch:   _search,
+                    onPickSong: _pickSong,
                   ),
               },
             ),
@@ -653,7 +638,6 @@ class _SongSelectImportSheetState extends State<SongSelectImportSheet> {
 // 6.  SHEET PANELS
 // ══════════════════════════════════════════════════════════════════════════════
 
-// ── SETTINGS ──────────────────────────────────────────────────────────────────
 class _SettingsPanel extends StatelessWidget {
   final Color                  primary;
   final TextEditingController  apiKeyCtrl;
@@ -676,7 +660,6 @@ class _SettingsPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── info box ──────────────────────────────────────────────────────
           Container(
             padding:    const EdgeInsets.all(14),
             decoration: BoxDecoration(
@@ -691,8 +674,7 @@ class _SettingsPanel extends StatelessWidget {
                   Icon(Icons.info_outline, size: 16, color: p),
                   const SizedBox(width: 6),
                   Text('How to get your API key',
-                      style: TextStyle(
-                          fontWeight: FontWeight.bold, color: p)),
+                      style: TextStyle(fontWeight: FontWeight.bold, color: p)),
                 ]),
                 const SizedBox(height: 8),
                 const Text(
@@ -706,7 +688,6 @@ class _SettingsPanel extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 22),
-
           _FieldLabel('CCLI API Key / Bearer Token'),
           const SizedBox(height: 6),
           TextField(
@@ -715,7 +696,6 @@ class _SettingsPanel extends StatelessWidget {
             decoration:  _dec('Paste your API Bearer token'),
           ),
           const SizedBox(height: 16),
-
           _FieldLabel('CCLI License Number'),
           const SizedBox(height: 6),
           TextField(
@@ -724,7 +704,6 @@ class _SettingsPanel extends StatelessWidget {
             keyboardType: TextInputType.number,
           ),
           const SizedBox(height: 26),
-
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(
@@ -746,15 +725,14 @@ class _SettingsPanel extends StatelessWidget {
   }
 }
 
-// ── SEARCH ────────────────────────────────────────────────────────────────────
 class _SearchPanel extends StatelessWidget {
-  final Color                  primary;
-  final TextEditingController  searchCtrl;
-  final List<_SongResult>      results;
-  final bool                   loading;
-  final String                 error;
-  final bool                   configured;
-  final VoidCallback           onSearch;
+  final Color                     primary;
+  final TextEditingController     searchCtrl;
+  final List<_SongResult>         results;
+  final bool                      loading;
+  final String                    error;
+  final bool                      configured;
+  final VoidCallback              onSearch;
   final ValueChanged<_SongResult> onPickSong;
 
   const _SearchPanel({
@@ -774,7 +752,6 @@ class _SearchPanel extends StatelessWidget {
     final p = primary;
     return Column(
       children: [
-        // ── search bar ───────────────────────────────────────────────────
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
           child: Row(
@@ -789,8 +766,7 @@ class _SearchPanel extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               SizedBox(
-                width:  52,
-                height: 52,
+                width: 52, height: 52,
                 child: ElevatedButton(
                   onPressed: loading ? null : onSearch,
                   style: ElevatedButton.styleFrom(
@@ -804,28 +780,24 @@ class _SearchPanel extends StatelessWidget {
                       ? SizedBox(
                           width: 18, height: 18,
                           child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color:       contrastOn(p)))
+                              strokeWidth: 2, color: contrastOn(p)))
                       : const Icon(Icons.search),
                 ),
               ),
             ],
           ),
         ),
-
         if (error.isNotEmpty) _ErrorBanner(message: error),
         if (!configured)
           _InfoBanner(
             message: 'No CCLI credentials found — tap ⚙ above to add them.',
             primary: p,
           ),
-
-        // ── results ───────────────────────────────────────────────────────
         Expanded(
           child: results.isEmpty && !loading
               ? _EmptySearch(primary: p)
               : ListView.separated(
-                  itemCount:     results.length,
+                  itemCount:        results.length,
                   separatorBuilder: (_, __) =>
                       const Divider(height: 1, indent: 56),
                   itemBuilder: (_, i) {
@@ -835,10 +807,8 @@ class _SearchPanel extends StatelessWidget {
                         backgroundColor: p.withValues(alpha: 0.12),
                         child: Icon(Icons.music_note, color: p, size: 18),
                       ),
-                      title: Text(
-                        song.title,
-                        style: const TextStyle(fontWeight: FontWeight.w600),
-                      ),
+                      title: Text(song.title,
+                          style: const TextStyle(fontWeight: FontWeight.w600)),
                       subtitle: Text(
                         '${song.artist}  •  CCLI ${song.ccliNumber}',
                         style: TextStyle(
@@ -855,18 +825,17 @@ class _SearchPanel extends StatelessWidget {
   }
 }
 
-// ── LYRICS / SECTION PICKER ───────────────────────────────────────────────────
 class _LyricsPanel extends StatelessWidget {
-  final Color                 primary;
-  final _SongDetail?          detail;
-  final bool                  loading;
-  final String                error;
-  final Set<int>              included;
+  final Color                    primary;
+  final _SongDetail?             detail;
+  final bool                     loading;
+  final String                   error;
+  final Set<int>                 included;
   final void Function(int, bool) onToggle;
-  final VoidCallback          onToggleAll;
+  final VoidCallback             onToggleAll;
   final void Function(int, int)  onReorder;
-  final VoidCallback          onImport;
-  final int                   includedCount;
+  final VoidCallback             onImport;
+  final int                      includedCount;
 
   const _LyricsPanel({
     super.key,
@@ -885,22 +854,13 @@ class _LyricsPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = primary;
-
-    if (loading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (error.isNotEmpty) {
-      return Center(child: _ErrorBanner(message: error));
-    }
-    if (detail == null) {
-      return const Center(child: CircularProgressIndicator());
-    }
+    if (loading) return const Center(child: CircularProgressIndicator());
+    if (error.isNotEmpty) return Center(child: _ErrorBanner(message: error));
+    if (detail == null) return const Center(child: CircularProgressIndicator());
 
     final d = detail!;
-
     return Column(
       children: [
-        // sub-header
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
           child: Row(
@@ -941,8 +901,6 @@ class _LyricsPanel extends StatelessWidget {
           ),
         ),
         const Divider(height: 1),
-
-        // ── reorderable section list ───────────────────────────────────────
         Expanded(
           child: ReorderableListView.builder(
             padding:    const EdgeInsets.fromLTRB(12, 8, 12, 100),
@@ -959,8 +917,6 @@ class _LyricsPanel extends StatelessWidget {
             ),
           ),
         ),
-
-        // ── import button ─────────────────────────────────────────────────
         SafeArea(
           top: false,
           child: Padding(
@@ -976,8 +932,8 @@ class _LyricsPanel extends StatelessWidget {
                   style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor:        p,
-                  foregroundColor:        contrastOn(p),
+                  backgroundColor:         p,
+                  foregroundColor:         contrastOn(p),
                   disabledBackgroundColor: Colors.grey.shade200,
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   shape: RoundedRectangleBorder(
@@ -992,14 +948,13 @@ class _LyricsPanel extends StatelessWidget {
   }
 }
 
-// ── Section card ──────────────────────────────────────────────────────────────
 class _SectionCard extends StatefulWidget {
-  final int     index;
-  final String  label;
-  final String  text;
-  final bool    included;
-  final Color   primary;
-  final void Function(bool) onToggle;
+  final int                  index;
+  final String               label;
+  final String               text;
+  final bool                 included;
+  final Color                primary;
+  final void Function(bool)  onToggle;
 
   const _SectionCard({
     super.key,
@@ -1089,25 +1044,19 @@ class _SectionCardState extends State<_SectionCard> {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// 7.  SONG COLLECTION TILE  (drop-in for _SlideListPanel)
+// 7.  SONG COLLECTION TILE
 // ══════════════════════════════════════════════════════════════════════════════
 
-/// Renders a collapsible song block in the slide-list panel.
-/// When collapsed: shows a single branded header row.
-/// When expanded:  shows a mini-tile per slide with internal drag-to-reorder.
 class SongCollectionTile extends StatelessWidget {
   final SongCollection      collection;
-  final Deck                deck;          // so we can compute first-slide index
+  final Deck                deck;
   final Color               primary;
   final Color               secondary;
   final Slide?              selectedSlide;
   final ValueChanged<Slide> onSelectSlide;
   final VoidCallback        onToggleExpand;
-  /// Move the whole collection up (-1) or down (+1) in the deck.
   final ValueChanged<int>   onMoveGroup;
-  /// Reorder a slide inside the collection: (oldGroupIdx, newGroupIdx).
   final Function(int, int)  onReorderSlide;
-  /// Remove all slides + delete the collection.
   final VoidCallback        onRemove;
 
   const SongCollectionTile({
@@ -1124,14 +1073,6 @@ class SongCollectionTile extends StatelessWidget {
     required this.onRemove,
   });
 
-  // ── find this collection's first deck index ──────────────────────────────
-  int get _firstDeckIndex {
-    for (var i = 0; i < deck.slides.length; i++) {
-      if (_collIdOf(deck.slides[i]) == collection.id) return i;
-    }
-    return deck.slides.length;
-  }
-
   @override
   Widget build(BuildContext context) {
     final p = primary;
@@ -1139,103 +1080,80 @@ class SongCollectionTile extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // ── Collection header ─────────────────────────────────────────────
         Container(
           margin:     const EdgeInsets.fromLTRB(4, 6, 4, 0),
           decoration: BoxDecoration(
-            color: p.withValues(alpha: 0.10),
+            color:        p.withValues(alpha: 0.10),
             borderRadius: BorderRadius.circular(9),
             border:       Border.all(color: p.withValues(alpha: 0.28)),
           ),
-          child: Column(
-            children: [
-              ListTile(
-                dense:   true,
-                leading: CircleAvatar(
-                  radius:          14,
-                  backgroundColor: p.withValues(alpha: 0.15),
-                  child: Icon(Icons.music_note, color: p, size: 15),
+          child: ListTile(
+            dense:   true,
+            leading: CircleAvatar(
+              radius:          14,
+              backgroundColor: p.withValues(alpha: 0.15),
+              child: Icon(Icons.music_note, color: p, size: 15),
+            ),
+            title: Text(
+              collection.songTitle,
+              style: TextStyle(
+                  fontWeight: FontWeight.bold, fontSize: 13, color: p),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            subtitle: Text(
+              '${collection.slides.length} slides  •  ${collection.artist}',
+              style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
+            ),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _IconBtn(
+                  icon: Icons.arrow_upward_rounded, size: 16,
+                  tooltip: 'Move song up', color: p,
+                  onTap: () => onMoveGroup(-1),
                 ),
-                title: Text(
-                  collection.songTitle,
-                  style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize:   13,
-                      color:      p),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                _IconBtn(
+                  icon: Icons.arrow_downward_rounded, size: 16,
+                  tooltip: 'Move song down', color: p,
+                  onTap: () => onMoveGroup(1),
                 ),
-                subtitle: Text(
-                  '${collection.slides.length} slides  •  ${collection.artist}',
-                  style: TextStyle(
-                      fontSize: 10,
-                      color:    Colors.grey.shade600),
+                _IconBtn(
+                  icon: collection.isExpanded
+                      ? Icons.expand_less : Icons.expand_more,
+                  size: 18,
+                  tooltip: collection.isExpanded ? 'Collapse' : 'Expand',
+                  color: p,
+                  onTap: onToggleExpand,
                 ),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // ── move up ────────────────────────────────────────────
-                    _IconBtn(
-                      icon:    Icons.arrow_upward_rounded,
-                      size:    16,
-                      tooltip: 'Move song up',
-                      color:   p,
-                      onTap:   () => onMoveGroup(-1),
-                    ),
-                    // ── move down ──────────────────────────────────────────
-                    _IconBtn(
-                      icon:    Icons.arrow_downward_rounded,
-                      size:    16,
-                      tooltip: 'Move song down',
-                      color:   p,
-                      onTap:   () => onMoveGroup(1),
-                    ),
-                    // ── expand / collapse ──────────────────────────────────
-                    _IconBtn(
-                      icon:    collection.isExpanded
-                          ? Icons.expand_less
-                          : Icons.expand_more,
-                      size:    18,
-                      tooltip: collection.isExpanded
-                          ? 'Collapse'
-                          : 'Expand',
-                      color:   p,
-                      onTap:   onToggleExpand,
-                    ),
-                    // ── remove ─────────────────────────────────────────────
-                    _IconBtn(
-                      icon:    Icons.delete_outline_rounded,
-                      size:    16,
-                      tooltip: 'Remove song',
-                      color:   Colors.red,
-                      onTap:   () => _confirmRemove(context),
-                    ),
-                  ],
+                _IconBtn(
+                  icon: Icons.delete_outline_rounded, size: 16,
+                  tooltip: 'Remove song', color: Colors.red,
+                  onTap: () => _confirmRemove(context),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
 
-        // ── Expanded: reorderable slide mini-tiles ────────────────────────
         if (collection.isExpanded && collection.slides.isNotEmpty)
           ReorderableListView.builder(
             shrinkWrap: true,
             physics:    const NeverScrollableScrollPhysics(),
             itemCount:  collection.slides.length,
-            onReorder:  (o, n) => onReorderSlide(o, n),
+            onReorder:  onReorderSlide,
             buildDefaultDragHandles: false,
             itemBuilder: (_, i) {
               final slide    = collection.slides[i];
               final selected = selectedSlide?.id == slide.id;
               return _SlideMiniTile(
-                key:      ValueKey(slide.id),
-                slide:    slide,
-                index:    i,
-                selected: selected,
-                primary:  p,
+                key:       ValueKey(slide.id),
+                slide:     slide,
+                index:     i,
+                selected:  selected,
+                primary:   p,
                 secondary: secondary,
-                onTap:    () => onSelectSlide(slide),
+                onTap:     () => onSelectSlide(slide),
               );
             },
           ),
@@ -1304,7 +1222,6 @@ class _SlideMiniTile extends StatelessWidget {
         ),
         child: Row(
           children: [
-            // colour swatch
             Container(
               width: 4, height: 32,
               decoration: BoxDecoration(
@@ -1312,7 +1229,6 @@ class _SlideMiniTile extends StatelessWidget {
                   borderRadius: BorderRadius.circular(2)),
             ),
             const SizedBox(width: 8),
-            // text
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1325,20 +1241,17 @@ class _SlideMiniTile extends StatelessWidget {
                   if (slide.body.isNotEmpty)
                     Text(slide.body,
                         style: TextStyle(
-                            fontSize: 10,
-                            color:    Colors.grey.shade600),
+                            fontSize: 10, color: Colors.grey.shade600),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis),
                 ],
               ),
             ),
-            // drag handle
             ReorderableDragStartListener(
               index: index,
               child: const Padding(
                 padding: EdgeInsets.only(left: 4),
-                child:   Icon(Icons.drag_handle,
-                    size: 16, color: Colors.grey),
+                child:   Icon(Icons.drag_handle, size: 16, color: Colors.grey),
               ),
             ),
           ],
@@ -1367,8 +1280,8 @@ class _DragHandle extends StatelessWidget {
 }
 
 class _SheetHeader extends StatelessWidget {
-  final Color       primary;
-  final _SheetPage  page;
+  final Color        primary;
+  final _SheetPage   page;
   final _SongResult? selected;
   final VoidCallback onSettings;
   final VoidCallback onBack;
@@ -1385,7 +1298,7 @@ class _SheetHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final p = primary;
+    final p        = primary;
     final showBack = page != _SheetPage.search;
 
     return Padding(
@@ -1418,9 +1331,7 @@ class _SheetHeader extends StatelessWidget {
                           ? selected?.title ?? 'Song Sections'
                           : 'CCLI SongSelect',
                   style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize:   16,
-                      color:      p),
+                      fontWeight: FontWeight.bold, fontSize: 16, color: p),
                 ),
                 Text(
                   page == _SheetPage.settings
@@ -1441,8 +1352,8 @@ class _SheetHeader extends StatelessWidget {
               color:     Colors.grey,
             ),
           IconButton(
-            icon:  const Icon(Icons.close_rounded),
-            color: Colors.grey,
+            icon:      const Icon(Icons.close_rounded),
+            color:     Colors.grey,
             onPressed: onClose,
           ),
         ],
@@ -1456,8 +1367,8 @@ class _FieldLabel extends StatelessWidget {
   const _FieldLabel(this.text);
 
   @override
-  Widget build(BuildContext context) =>
-      Text(text, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13));
+  Widget build(BuildContext context) => Text(text,
+      style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13));
 }
 
 class _IconBtn extends StatelessWidget {
@@ -1559,9 +1470,8 @@ InputDecoration _dec(String hint) => InputDecoration(
       hintText:       hint,
       hintStyle:      const TextStyle(fontSize: 13),
       contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      border:         OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10)),
-      enabledBorder: OutlineInputBorder(
+      border:         OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+      enabledBorder:  OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
           borderSide:   BorderSide(color: Colors.grey.shade300)),
     );

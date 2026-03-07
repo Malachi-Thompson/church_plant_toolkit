@@ -352,13 +352,14 @@ class Deck {
     required this.slides,
     required this.createdAt,
     this.description = '',
-    this.tags        = const [],
+    List<String>?    tags,
     this.isTemplate  = false,
     this.isPinned    = false,
     this.sortOrder   = 0,
     this.lastUsedAt,
     List<SlideGroup>? groups,
-  }) : groups = groups ?? [];
+  }) : tags   = tags   ?? [],
+       groups = groups ?? [];
 
   int get slideCount => slides.length;
 
