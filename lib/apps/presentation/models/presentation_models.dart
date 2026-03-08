@@ -299,6 +299,18 @@ class Slide {
     SlideStyle? style,
   }) : style = style ?? SlideStyle();
 
+  static const _overrideTag = '\x00override';
+
+  /// Whether this slide's style has been manually customised (diverged from master).
+  bool get styleOverridden => reference.contains(_overrideTag);
+  set styleOverridden(bool v) {
+    if (v) {
+      if (!reference.contains(_overrideTag)) reference += _overrideTag;
+    } else {
+      reference = reference.replaceAll(_overrideTag, '');
+    }
+  }
+
   // ── JSON (for legacy data migration only) ─────────────────────────────────
 
   Map<String, dynamic> toJson() => {
@@ -407,10 +419,12 @@ class Deck {
   DateTime?        lastUsedAt;
   DateTime?        lastModifiedAt;
   String?          filePath;
-  String           masterStyleId;   // layout template id (e.g. 'midnight_worship')
+  String           masterStyleId;   // layout template id (kept for DB compat)
   int              masterBgColor;   // ARGB stored as int; 0 = use brand primary
   int              masterAccentColor; // 0 = use brand secondary
   int              masterTextColor;   // 0 = use default (white)
+  // JSON blob: { bgColor, accentColor, textColor, typeStyles: {type: index} }
+  String           masterStyleJson;
 
   Deck({
     required this.id,
@@ -432,6 +446,7 @@ class Deck {
     this.masterBgColor      = 0,
     this.masterAccentColor  = 0,
     this.masterTextColor    = 0,
+    this.masterStyleJson    = '',
     List<SlideGroup>? groups,
   })  : tags   = tags   ?? [],
         groups = groups ?? [];
@@ -459,6 +474,7 @@ class Deck {
         'master_bg_color':    masterBgColor,
         'master_accent_color': masterAccentColor,
         'master_text_color':  masterTextColor,
+        'master_style_json':  masterStyleJson,
         'created_at':       createdAt.toIso8601String(),
         'last_used_at':     lastUsedAt?.toIso8601String(),
         'last_modified_at': lastModifiedAt?.toIso8601String(),
@@ -520,6 +536,7 @@ class Deck {
       masterBgColor:     ((row['master_bg_color']    as num?) ?? 0).toInt(),
       masterAccentColor: ((row['master_accent_color'] as num?) ?? 0).toInt(),
       masterTextColor:   ((row['master_text_color']  as num?) ?? 0).toInt(),
+      masterStyleJson:   (row['master_style_json']   as String?) ?? '',
       slides:         [], // populated by DB after this call
     );
   }
@@ -693,5 +710,100 @@ class RecordSettings {
       case 'low':    return '~700 MB/hr';
       default:       return '~2 GB/hr';
     }
+  }
+}
+
+// ── DECK MASTER STYLE ─────────────────────────────────────────────────────────
+// Parsed from Deck.masterStyleJson.  Stores colour overrides and per-slide-type
+// style preset index (0, 1, or 2 — maps to the 3 choices in _slideStyleChoices).
+
+class DeckMasterStyle {
+  final int bgColorArgb;      // 0 = brand primary
+  final int accentColorArgb;  // 0 = brand secondary
+  final int textColorArgb;    // 0 = white
+  /// Maps slide type ('title','lyric','scripture','announcement','blank') → 0/1/2
+  final Map<String, int> typeStyleIndex;
+
+  const DeckMasterStyle({
+    this.bgColorArgb     = 0,
+    this.accentColorArgb = 0,
+    this.textColorArgb   = 0,
+    Map<String, int>? typeStyleIndex,
+  }) : typeStyleIndex = typeStyleIndex ?? const {};
+
+  Color resolveBg(Color brandPrimary) =>
+      bgColorArgb == 0 ? brandPrimary : Color(bgColorArgb);
+
+  Color resolveAccent(Color brandSecondary) =>
+      accentColorArgb == 0 ? brandSecondary : Color(accentColorArgb);
+
+  Color resolveText() =>
+      textColorArgb == 0 ? Colors.white : Color(textColorArgb);
+
+  int styleIndexFor(String type) => (typeStyleIndex[type] ?? 0).clamp(0, 2);
+
+  DeckMasterStyle copyWith({
+    int? bgColorArgb,
+    int? accentColorArgb,
+    int? textColorArgb,
+    Map<String, int>? typeStyleIndex,
+  }) => DeckMasterStyle(
+        bgColorArgb:     bgColorArgb     ?? this.bgColorArgb,
+        accentColorArgb: accentColorArgb ?? this.accentColorArgb,
+        textColorArgb:   textColorArgb   ?? this.textColorArgb,
+        typeStyleIndex:  typeStyleIndex  ?? Map.of(this.typeStyleIndex),
+      );
+
+  DeckMasterStyle withTypeIndex(String type, int index) {
+    final m = Map<String, int>.of(typeStyleIndex);
+    m[type] = index;
+    return copyWith(typeStyleIndex: m);
+  }
+
+  factory DeckMasterStyle.fromDeck(Deck deck, Color brandPrimary, Color brandSecondary) {
+    if (deck.masterStyleJson.isEmpty) {
+      return DeckMasterStyle(
+        bgColorArgb:     deck.masterBgColor,
+        accentColorArgb: deck.masterAccentColor,
+        textColorArgb:   deck.masterTextColor,
+      );
+    }
+    try {
+      final j = jsonDecode(deck.masterStyleJson) as Map<String, dynamic>;
+      final raw = j['typeStyles'];
+      final typeStyles = <String, int>{};
+      if (raw is Map) {
+        for (final e in raw.entries) {
+          if (e.key is String && e.value is num) {
+            typeStyles[e.key as String] = (e.value as num).toInt();
+          }
+        }
+      }
+      return DeckMasterStyle(
+        bgColorArgb:     ((j['bgColor']     as num?) ?? 0).toInt(),
+        accentColorArgb: ((j['accentColor'] as num?) ?? 0).toInt(),
+        textColorArgb:   ((j['textColor']   as num?) ?? 0).toInt(),
+        typeStyleIndex:  typeStyles,
+      );
+    } catch (_) {
+      return DeckMasterStyle(
+        bgColorArgb:     deck.masterBgColor,
+        accentColorArgb: deck.masterAccentColor,
+        textColorArgb:   deck.masterTextColor,
+      );
+    }
+  }
+
+  /// Write back to deck fields (call before saving deck).
+  void writeToDeck(Deck deck) {
+    deck.masterBgColor     = bgColorArgb;
+    deck.masterAccentColor = accentColorArgb;
+    deck.masterTextColor   = textColorArgb;
+    deck.masterStyleJson   = jsonEncode({
+      'bgColor':     bgColorArgb,
+      'accentColor': accentColorArgb,
+      'textColor':   textColorArgb,
+      'typeStyles':  typeStyleIndex,
+    });
   }
 }

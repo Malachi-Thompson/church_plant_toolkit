@@ -16,10 +16,10 @@ import 'dialogs/stream_setup_dialog.dart';
 import 'dialogs/record_setup_dialog.dart';
 import 'dialogs/verse_picker_dialog.dart';
 import 'dialogs/deck_properties_dialog.dart';
-import 'dialogs/master_style_dialog.dart' show showMasterStyleDialog, MasterStyleResult;
 import 'widgets/presentation_widgets.dart';
 import 'views/presentations_home.dart';
 import 'views/deck_editor_view.dart';
+import 'views/slide_editor_view.dart' show slideStyleChoices;
 import 'views/present_view.dart';
 
 class PresentationScreen extends StatelessWidget {
@@ -54,48 +54,6 @@ class PresentationScreen extends StatelessWidget {
     ctrl.dispose();
     if (!context.mounted) return;
     await ps.createDeck(result ?? '');
-    // New decks: default to brand colours (0 = "use brand")
-    if (ps.openDeck != null) {
-      ps.openDeck!.masterStyleId     = 'your_brand';
-      ps.openDeck!.masterBgColor     = 0;
-      ps.openDeck!.masterAccentColor = 0;
-      ps.openDeck!.masterTextColor   = 0;
-    }
-    // Open master style dialog immediately on creation
-    if (context.mounted && ps.openDeck != null) {
-      await _showMasterStyle(context, ps);
-    }
-  }
-
-  Future<void> _showMasterStyle(
-      BuildContext context, PresentationState ps) async {
-    if (ps.openDeck == null) return;
-    final state  = context.read<AppState>();
-    final deck   = ps.openDeck!;
-    final result = await showMasterStyleDialog(
-      context,
-      primary:            state.brandPrimary,
-      secondary:          state.brandSecondary,
-      currentStyleId:     deck.masterStyleId,
-      currentBgColor:     deck.masterBgColor,
-      currentAccentColor: deck.masterAccentColor,
-      currentTextColor:   deck.masterTextColor,
-    );
-    if (result == null || !context.mounted) return;
-    deck.masterStyleId     = result.styleId;
-    deck.masterBgColor     = result.bgColor;
-    deck.masterAccentColor = result.accentColor;
-    deck.masterTextColor   = result.textColor;
-    await ps.flushSave();
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Master style applied'),
-          backgroundColor: Colors.green,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    }
   }
 
   Future<void> _promptRename(
@@ -336,12 +294,6 @@ class PresentationScreen extends StatelessWidget {
       if (isWide) {
         // Wide: show individual buttons
         actions.add(IconButton(
-          icon:    const Icon(Icons.style_rounded),
-          tooltip: 'Master Style',
-          color:   contrastOn(primary).withValues(alpha: 0.80),
-          onPressed: () => _showMasterStyle(context, ps),
-        ));
-        actions.add(IconButton(
           icon:    const Icon(Icons.info_outline_rounded),
           tooltip: 'Presentation Properties',
           color:   contrastOn(primary).withValues(alpha: 0.80),
@@ -375,9 +327,6 @@ class PresentationScreen extends StatelessWidget {
           icon: Icon(Icons.more_vert, color: contrastOn(primary)),
           onSelected: (v) {
             switch (v) {
-              case 'master_style':
-                _showMasterStyle(context, ps);
-                break;
               case 'properties':
                 _showProperties(context, ps, ps.openDeck!);
                 break;
@@ -390,14 +339,6 @@ class PresentationScreen extends StatelessWidget {
             }
           },
           itemBuilder: (_) => [
-            PopupMenuItem(
-              value: 'master_style',
-              child: ListTile(
-                leading: const Icon(Icons.style_rounded),
-                title: const Text('Master Style'),
-                dense: true, contentPadding: EdgeInsets.zero,
-              ),
-            ),
             PopupMenuItem(
               value: 'properties',
               child: ListTile(
@@ -533,6 +474,20 @@ class PresentationScreen extends StatelessWidget {
               onMoveCollection:        ps.moveCollection,
               onRemoveCollection:      ps.removeCollection,
               onReorderCollectionSlide: ps.reorderCollectionSlide,
+              onApplyMasterStyle: (master) => ps.applyMasterStyle(
+                master, primary, secondary,
+                (p, s) => slideStyleChoices(p, s).map(
+                  (type, list) => MapEntry(type, list.map((c) => c.style).toList()),
+                ),
+              ),
+              onResetSlideToMaster: ps.selectedSlide != null
+                  ? () => ps.resetSlideToMaster(
+                        ps.selectedSlide!, primary, secondary,
+                        (p, s) => slideStyleChoices(p, s).map(
+                          (type, list) => MapEntry(type, list.map((c) => c.style).toList()),
+                        ),
+                      )
+                  : null,
             ),
     );
   }

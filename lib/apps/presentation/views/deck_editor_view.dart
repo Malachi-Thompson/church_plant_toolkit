@@ -32,6 +32,8 @@ class DeckEditorView extends StatelessWidget {
   final void Function(String collId, int delta) onMoveCollection;
   final ValueChanged<String>                    onRemoveCollection;
   final void Function(String, int, int)         onReorderCollectionSlide;
+  final void Function(DeckMasterStyle)          onApplyMasterStyle;
+  final VoidCallback?                           onResetSlideToMaster;
 
   const DeckEditorView({
     super.key,
@@ -55,6 +57,8 @@ class DeckEditorView extends StatelessWidget {
     required this.onMoveCollection,
     required this.onRemoveCollection,
     required this.onReorderCollectionSlide,
+    required this.onApplyMasterStyle,
+    this.onResetSlideToMaster,
   });
 
   @override
@@ -75,6 +79,8 @@ class DeckEditorView extends StatelessWidget {
         onToggleCollection: onToggleCollection, onMoveCollection: onMoveCollection,
         onRemoveCollection: onRemoveCollection,
         onReorderCollectionSlide: onReorderCollectionSlide,
+        onApplyMasterStyle: onApplyMasterStyle,
+        onResetSlideToMaster: onResetSlideToMaster,
       );
     }
     return _MobileLayout(
@@ -90,6 +96,8 @@ class DeckEditorView extends StatelessWidget {
       onToggleCollection: onToggleCollection, onMoveCollection: onMoveCollection,
       onRemoveCollection: onRemoveCollection,
       onReorderCollectionSlide: onReorderCollectionSlide,
+      onApplyMasterStyle: onApplyMasterStyle,
+      onResetSlideToMaster: onResetSlideToMaster,
     );
   }
 }
@@ -112,6 +120,8 @@ class _WideLayout extends StatelessWidget {
   final void Function(String,int) onMoveCollection;
   final ValueChanged<String> onRemoveCollection;
   final void Function(String,int,int) onReorderCollectionSlide;
+  final void Function(DeckMasterStyle) onApplyMasterStyle;
+  final VoidCallback? onResetSlideToMaster;
 
   const _WideLayout({
     required this.deck, required this.selectedSlide,
@@ -124,6 +134,7 @@ class _WideLayout extends StatelessWidget {
     required this.onRemoveSlideFromGroup, required this.onImportCollection,
     required this.onToggleCollection, required this.onMoveCollection,
     required this.onRemoveCollection, required this.onReorderCollectionSlide,
+    required this.onApplyMasterStyle, this.onResetSlideToMaster,
   });
 
   @override
@@ -157,8 +168,15 @@ class _WideLayout extends StatelessWidget {
                   slide: selectedSlide!,
                   primary: primary, secondary: secondary,
                   onChanged: onSlideChanged,
+                  onResetToMaster: onResetSlideToMaster,
                 )
-              : _EmptyPrompt(primary: primary, secondary: secondary, onAdd: onAddSlide),
+              : MasterStylePanel(
+                  deck: deck,
+                  primary: primary,
+                  secondary: secondary,
+                  onAddSlide: onAddSlide,
+                  onApply: onApplyMasterStyle,
+                ),
         ),
       ],
     );
@@ -183,6 +201,8 @@ class _MobileLayout extends StatefulWidget {
   final void Function(String,int) onMoveCollection;
   final ValueChanged<String> onRemoveCollection;
   final void Function(String,int,int) onReorderCollectionSlide;
+  final void Function(DeckMasterStyle) onApplyMasterStyle;
+  final VoidCallback? onResetSlideToMaster;
 
   const _MobileLayout({
     required this.deck, required this.selectedSlide,
@@ -195,6 +215,7 @@ class _MobileLayout extends StatefulWidget {
     required this.onRemoveSlideFromGroup, required this.onImportCollection,
     required this.onToggleCollection, required this.onMoveCollection,
     required this.onRemoveCollection, required this.onReorderCollectionSlide,
+    required this.onApplyMasterStyle, this.onResetSlideToMaster,
   });
 
   @override
@@ -302,11 +323,14 @@ class _MobileLayoutState extends State<_MobileLayout> {
               primary: p,
               secondary: widget.secondary,
               onChanged: widget.onSlideChanged,
+              onResetToMaster: widget.onResetSlideToMaster,
             )
-          : _EmptyPrompt(
+          : MasterStylePanel(
+              deck: widget.deck,
               primary: p,
               secondary: widget.secondary,
-              onAdd: widget.onAddSlide,
+              onAddSlide: widget.onAddSlide,
+              onApply: widget.onApplyMasterStyle,
             ),
       // ── Mobile bottom bar ────────────────────────────────────────────────
       bottomNavigationBar: SafeArea(
@@ -1035,6 +1059,358 @@ class _Arr extends StatelessWidget {
           child: Icon(icon, size: 14, color: Colors.grey.shade400),
         ),
       );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// MASTER STYLE PANEL — shown when no slide is selected
+// Lets you set deck-wide colours and pick a style preset per slide type.
+// ══════════════════════════════════════════════════════════════════════════════
+class MasterStylePanel extends StatefulWidget {
+  final Deck                           deck;
+  final Color                          primary;
+  final Color                          secondary;
+  final ValueChanged<String>           onAddSlide;
+  final void Function(DeckMasterStyle) onApply;
+
+  const MasterStylePanel({
+    super.key,
+    required this.deck,
+    required this.primary,
+    required this.secondary,
+    required this.onAddSlide,
+    required this.onApply,
+  });
+
+  @override
+  State<MasterStylePanel> createState() => _MasterStylePanelState();
+}
+
+class _MasterStylePanelState extends State<MasterStylePanel> {
+  late DeckMasterStyle _master;
+
+  static const _types = ['title', 'lyric', 'scripture', 'announcement', 'blank'];
+  static const _typeLabels = {
+    'title': 'Title', 'lyric': 'Lyric', 'scripture': 'Scripture',
+    'announcement': 'Announcement', 'blank': 'Blank',
+  };
+  static const _typeIcons = {
+    'title': Icons.title, 'lyric': Icons.music_note,
+    'scripture': Icons.menu_book, 'announcement': Icons.campaign,
+    'blank': Icons.crop_square,
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    _master = DeckMasterStyle.fromDeck(
+        widget.deck, widget.primary, widget.secondary);
+  }
+
+  @override
+  void didUpdateWidget(MasterStylePanel old) {
+    super.didUpdateWidget(old);
+    if (old.deck.id != widget.deck.id) {
+      _master = DeckMasterStyle.fromDeck(
+          widget.deck, widget.primary, widget.secondary);
+    }
+  }
+
+  void _apply() {
+    widget.onApply(_master);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Master style applied to all slides'),
+          backgroundColor: widget.primary,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = widget.primary;
+    final choices = slideStyleChoices(widget.primary, widget.secondary);
+
+    return Column(children: [
+      // ── Header ──────────────────────────────────────────────────────────────
+      Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+        decoration: BoxDecoration(
+          color: p.withValues(alpha: 0.06),
+          border: Border(bottom: BorderSide(color: p.withValues(alpha: 0.15))),
+        ),
+        child: Row(children: [
+          Icon(Icons.palette_rounded, color: p, size: 22),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('Master Style',
+                  style: TextStyle(
+                      fontWeight: FontWeight.bold, fontSize: 16, color: p)),
+              Text('Set default colours and layouts for all slides',
+                  style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+            ]),
+          ),
+          ElevatedButton.icon(
+            onPressed: _apply,
+            icon: const Icon(Icons.check_rounded, size: 16),
+            label: const Text('Apply to all'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: p,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+          ),
+        ]),
+      ),
+
+      // ── Scrollable body ─────────────────────────────────────────────────────
+      Expanded(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(20),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+
+            // ── Colour pickers ─────────────────────────────────────────────
+            Text('Colours', style: TextStyle(
+                fontWeight: FontWeight.bold, fontSize: 13, color: p)),
+            const SizedBox(height: 12),
+            _ColourPickerRow(
+              label: 'Background',
+              brandColor: widget.primary,
+              currentArgb: _master.bgColorArgb,
+              onChanged: (argb) =>
+                  setState(() => _master = _master.copyWith(bgColorArgb: argb)),
+            ),
+            const SizedBox(height: 10),
+            _ColourPickerRow(
+              label: 'Text',
+              brandColor: Colors.white,
+              currentArgb: _master.textColorArgb,
+              onChanged: (argb) =>
+                  setState(() => _master = _master.copyWith(textColorArgb: argb)),
+            ),
+            const SizedBox(height: 24),
+            const Divider(),
+            const SizedBox(height: 16),
+
+            // ── Per-type style pickers ─────────────────────────────────────
+            Text('Slide Style Presets', style: TextStyle(
+                fontWeight: FontWeight.bold, fontSize: 13, color: p)),
+            Text('Choose a default look for each slide type',
+                style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
+            const SizedBox(height: 16),
+
+            for (final type in _types) ...[
+              Row(children: [
+                Icon(_typeIcons[type]!, size: 16, color: p),
+                const SizedBox(width: 6),
+                Text(_typeLabels[type]!,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w600, fontSize: 13)),
+              ]),
+              const SizedBox(height: 8),
+              Row(
+                children: List.generate(3, (i) {
+                  final option = choices[type]![i];
+                  final selected = _master.styleIndexFor(type) == i;
+                  return Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: _MasterStyleCard(
+                        choice: option,
+                        selected: selected,
+                        primary: p,
+                        onTap: () => setState(() =>
+                            _master = _master.withTypeIndex(type, i)),
+                      ),
+                    ),
+                  );
+                }),
+              ),
+              const SizedBox(height: 20),
+            ],
+
+            const Divider(),
+            const SizedBox(height: 16),
+
+            // ── Add first slide ─────────────────────────────────────────────
+            Text('Add a slide', style: TextStyle(
+                fontWeight: FontWeight.bold, fontSize: 13, color: p)),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8, runSpacing: 8,
+              children: SlideDefaults.slideTypes.map((type) =>
+                  OutlinedButton(
+                    onPressed: () => widget.onAddSlide(type),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: p,
+                      side: BorderSide(color: p.withValues(alpha: 0.40)),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8)),
+                    ),
+                    child: Text(SlideDefaults.typeLabel(type),
+                        style: const TextStyle(fontSize: 12)),
+                  )).toList(),
+            ),
+          ]),
+        ),
+      ),
+    ]);
+  }
+}
+
+// ── Colour swatch picker row ──────────────────────────────────────────────────
+class _ColourPickerRow extends StatelessWidget {
+  final String label;
+  final Color  brandColor;
+  final int    currentArgb;
+  final ValueChanged<int> onChanged;
+
+  static const _swatches = [
+    0xFF000000, 0xFF0A0A12, 0xFF0D1B3E, 0xFF1A3A5C,
+    0xFF0D4F3C, 0xFF3D0066, 0xFF1C1C2E, 0xFF5A5045,
+    0xFFCF6A0A, 0xFFE63900, 0xFFFFFFFF,
+  ];
+
+  const _ColourPickerRow({
+    required this.label, required this.brandColor,
+    required this.currentArgb, required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(children: [
+      SizedBox(
+        width: 100,
+        child: Text(label,
+            style: const TextStyle(fontSize: 12, color: Colors.grey)),
+      ),
+      // Brand reset
+      GestureDetector(
+        onTap: () => onChanged(0),
+        child: Container(
+          width: 32, height: 32,
+          margin: const EdgeInsets.only(right: 6),
+          decoration: BoxDecoration(
+            color: brandColor,
+            shape: BoxShape.circle,
+            border: Border.all(
+                color: currentArgb == 0 ? Colors.black87 : Colors.grey.shade300,
+                width: currentArgb == 0 ? 2.5 : 1),
+          ),
+          child: currentArgb == 0
+              ? const Icon(Icons.auto_awesome, size: 12, color: Colors.white)
+              : null,
+        ),
+      ),
+      Expanded(
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: _swatches.map((argb) {
+              final sel = currentArgb == argb;
+              return GestureDetector(
+                onTap: () => onChanged(argb),
+                child: Container(
+                  width: 28, height: 28,
+                  margin: const EdgeInsets.only(right: 6),
+                  decoration: BoxDecoration(
+                    color: Color(argb),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                        color: sel ? Colors.black87 : Colors.grey.shade300,
+                        width: sel ? 2.5 : 1),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+        ),
+      ),
+    ]);
+  }
+}
+
+// ── Master style card — mini preview + label ──────────────────────────────────
+class _MasterStyleCard extends StatelessWidget {
+  final SlideStyleChoice choice;
+  final bool             selected;
+  final Color            primary;
+  final VoidCallback     onTap;
+
+  const _MasterStyleCard({
+    required this.choice, required this.selected,
+    required this.primary, required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 140),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: selected ? primary : Colors.grey.shade200,
+            width: selected ? 2.5 : 1,
+          ),
+          boxShadow: [BoxShadow(
+            color: selected
+                ? primary.withValues(alpha: 0.20)
+                : Colors.black.withValues(alpha: 0.05),
+            blurRadius: selected ? 10 : 4,
+          )],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(9),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            AspectRatio(
+              aspectRatio: 16 / 9,
+              child: CustomPaint(
+                painter: SlideChoicePainter(choice: choice),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      SlideCBar(w: 0.75, h: 5, color: Colors.white.withValues(alpha: 0.90)),
+                      const SizedBox(height: 3),
+                      SlideCBar(w: 0.60, h: 5, color: Colors.white.withValues(alpha: 0.90)),
+                      const SizedBox(height: 4),
+                      SlideCBar(w: 0.50, h: 3, color: Colors.white.withValues(alpha: 0.50)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            Container(
+              width: double.infinity,
+              color: selected ? primary.withValues(alpha: 0.08) : Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 5),
+              child: Column(children: [
+                if (selected)
+                  Icon(Icons.check_circle_rounded, size: 12, color: primary),
+                Text(choice.label,
+                    style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                        color: selected ? primary : Colors.black87),
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center),
+              ]),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
 }
 
 class _EmptyPrompt extends StatelessWidget {

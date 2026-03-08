@@ -29,7 +29,7 @@ import 'presentation_models.dart';
 // Schema constants
 // ─────────────────────────────────────────────────────────────────────────────
 const _kDbName    = 'presentation_studio.db';
-const _kDbVersion = 3;
+const _kDbVersion = 4;
 const _tDecks     = 'decks';
 const _tSlides    = 'slides';
 const _tSettings  = 'app_settings';
@@ -86,6 +86,9 @@ class PresentationDatabase {
     if (oldV <= 2 && newV >= 3) {
       await _migrateV2ToV3(db);
     }
+    if (oldV < 4) {
+      await _migrateV3ToV4(db);
+    }
   }
 
   Future<void> _migrateV2ToV3(Database db) async {
@@ -105,6 +108,17 @@ class PresentationDatabase {
       }
     }
     dev.log('[PresentationDatabase] v2→v3 done');
+  }
+
+  Future<void> _migrateV3ToV4(Database db) async {
+    dev.log('[PresentationDatabase] v3→v4: adding master_style_json column');
+    try {
+      await db.execute(
+          "ALTER TABLE $_tDecks ADD COLUMN master_style_json TEXT NOT NULL DEFAULT ''");
+    } catch (e) {
+      dev.log('[PresentationDatabase] v3→v4 note: $e');
+    }
+    dev.log('[PresentationDatabase] v3→v4 done');
   }
 
   // ── Schema builders ────────────────────────────────────────────────────────
@@ -128,6 +142,7 @@ class PresentationDatabase {
         master_bg_color      INTEGER NOT NULL DEFAULT 0,
         master_accent_color  INTEGER NOT NULL DEFAULT 0,
         master_text_color    INTEGER NOT NULL DEFAULT 0,
+        master_style_json    TEXT NOT NULL DEFAULT '',
         created_at       TEXT NOT NULL,
         last_used_at     TEXT,
         last_modified_at TEXT

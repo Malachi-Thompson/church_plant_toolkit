@@ -11,7 +11,6 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../models/presentation_models.dart';
 import '../widgets/presentation_widgets.dart';
-import '../dialogs/master_style_dialog.dart' show buildPresets, StylePreset;
 import '../../../theme.dart';
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -22,6 +21,8 @@ class SlideEditorView extends StatefulWidget {
   final Color primary;
   final Color secondary;
   final VoidCallback onChanged;
+  /// Called when user taps "Reset to master style". Null = hide the button.
+  final VoidCallback? onResetToMaster;
 
   const SlideEditorView({
     super.key,
@@ -29,6 +30,7 @@ class SlideEditorView extends StatefulWidget {
     required this.primary,
     required this.secondary,
     required this.onChanged,
+    this.onResetToMaster,
   });
 
   @override
@@ -82,6 +84,7 @@ class _SlideEditorViewState extends State<SlideEditorView>
 
   void _updateStyle(SlideStyle Function(SlideStyle) updater) {
     widget.slide.style = updater(widget.slide.style);
+    widget.slide.styleOverridden = true;
     _notify();
   }
 
@@ -134,6 +137,8 @@ class _SlideEditorViewState extends State<SlideEditorView>
                   Tab(icon: Icon(Icons.auto_awesome, size: 17), text: 'Effects'),
                 ],
               ),
+              if (widget.slide.styleOverridden && widget.onResetToMaster != null)
+                _OverrideBanner(primary: widget.primary, onReset: widget.onResetToMaster!),
               Expanded(
                 child: TabBarView(
                   controller: _tabs,
@@ -242,7 +247,8 @@ class _SlideEditorViewState extends State<SlideEditorView>
                   Tab(icon: Icon(Icons.auto_awesome, size: 18), text: 'Effects'),
                 ],
               ),
-              Expanded(
+              if (widget.slide.styleOverridden && widget.onResetToMaster != null)
+                _OverrideBanner(primary: p, onReset: widget.onResetToMaster!),              Expanded(
                 child: TabBarView(
                   controller: _tabs,
                   children: _tabBodies(context),
@@ -938,7 +944,7 @@ class _EffectsTab extends StatelessWidget {
 /// Horizontal chip row letting the user snap the current slide to a preset.
 /// Chips show the preset swatch + name; tapping applies the preset's [SlideStyle].
 // Per-slide-type style choices — 3 curated looks shown as visual cards
-class _SlideStyleChoice {
+class SlideStyleChoice {
   final String     label;
   final String     subtitle;
   final Color      swatch;
@@ -947,7 +953,7 @@ class _SlideStyleChoice {
   final bool       hasTextBox;
   final SlideStyle style;
 
-  const _SlideStyleChoice({
+  const SlideStyleChoice({
     required this.label,
     required this.subtitle,
     required this.swatch,
@@ -958,11 +964,11 @@ class _SlideStyleChoice {
   });
 }
 
-Map<String, List<_SlideStyleChoice>> _slideStyleChoices(
+Map<String, List<SlideStyleChoice>> slideStyleChoices(
     Color primary, Color secondary) {
   return {
     'title': [
-      _SlideStyleChoice(
+      SlideStyleChoice(
         label: 'Bold Impact', subtitle: 'Full gradient • large type',
         swatch: primary, swatchEnd: Color.lerp(primary, Colors.black, 0.55)!,
         style: SlideStyle(
@@ -976,7 +982,7 @@ Map<String, List<_SlideStyleChoice>> _slideStyleChoices(
           showTextBox: false,
         ),
       ),
-      _SlideStyleChoice(
+      SlideStyleChoice(
         label: 'Clean White', subtitle: 'Light bg • dark text',
         swatch: const Color(0xFFF8F8FA),
         swatchEnd: const Color(0xFFDDDDE8),
@@ -990,7 +996,7 @@ Map<String, List<_SlideStyleChoice>> _slideStyleChoices(
           textShadow: false, showTextBox: false,
         ),
       ),
-      _SlideStyleChoice(
+      SlideStyleChoice(
         label: 'Pill Accent', subtitle: 'Dark bg • branded box',
         swatch: const Color(0xFF0A0A12),
         swatchEnd: const Color(0xFF0A0A12),
@@ -1008,7 +1014,7 @@ Map<String, List<_SlideStyleChoice>> _slideStyleChoices(
       ),
     ],
     'lyric': [
-      _SlideStyleChoice(
+      SlideStyleChoice(
         label: 'Worship Dark', subtitle: 'Deep navy • glow shadow',
         swatch: const Color(0xFF0D1B3E), swatchEnd: const Color(0xFF000511),
         style: SlideStyle(
@@ -1023,7 +1029,7 @@ Map<String, List<_SlideStyleChoice>> _slideStyleChoices(
           showTextBox: false,
         ),
       ),
-      _SlideStyleChoice(
+      SlideStyleChoice(
         label: 'Warm Praise', subtitle: 'Amber gradient • bold',
         swatch: const Color(0xFFD4770A), swatchEnd: const Color(0xFF7B1A1A),
         style: SlideStyle(
@@ -1037,7 +1043,7 @@ Map<String, List<_SlideStyleChoice>> _slideStyleChoices(
           showTextBox: false,
         ),
       ),
-      _SlideStyleChoice(
+      SlideStyleChoice(
         label: 'Frosted Box', subtitle: 'Black bg • frosted pill',
         swatch: const Color(0xFF111111), swatchEnd: const Color(0xFF111111),
         useGradient: false, hasTextBox: true,
@@ -1054,7 +1060,7 @@ Map<String, List<_SlideStyleChoice>> _slideStyleChoices(
       ),
     ],
     'scripture': [
-      _SlideStyleChoice(
+      SlideStyleChoice(
         label: 'Ocean Deep', subtitle: 'Navy vignette • italic serif',
         swatch: const Color(0xFF006994), swatchEnd: const Color(0xFF001A33),
         style: SlideStyle(
@@ -1069,7 +1075,7 @@ Map<String, List<_SlideStyleChoice>> _slideStyleChoices(
           showTextBox: false,
         ),
       ),
-      _SlideStyleChoice(
+      SlideStyleChoice(
         label: 'Stone Chapel', subtitle: 'Warm grey • classic serif',
         swatch: const Color(0xFF5A5045), swatchEnd: const Color(0xFF2A2018),
         style: SlideStyle(
@@ -1084,7 +1090,7 @@ Map<String, List<_SlideStyleChoice>> _slideStyleChoices(
           showTextBox: false,
         ),
       ),
-      _SlideStyleChoice(
+      SlideStyleChoice(
         label: 'White Card', subtitle: 'Light bg • reference box',
         swatch: const Color(0xFFF2F2F5), swatchEnd: const Color(0xFFE0E0EC),
         hasTextBox: true,
@@ -1103,7 +1109,7 @@ Map<String, List<_SlideStyleChoice>> _slideStyleChoices(
       ),
     ],
     'announcement': [
-      _SlideStyleChoice(
+      SlideStyleChoice(
         label: 'High Contrast', subtitle: 'Dark bg • left-aligned box',
         swatch: const Color(0xFF0D0D0D), swatchEnd: const Color(0xFF0D0D0D),
         useGradient: false, hasTextBox: true,
@@ -1118,7 +1124,7 @@ Map<String, List<_SlideStyleChoice>> _slideStyleChoices(
           textBoxRadius: 4, textBoxPaddingH: 28, textBoxPaddingV: 20,
         ),
       ),
-      _SlideStyleChoice(
+      SlideStyleChoice(
         label: 'Fire & Energy', subtitle: 'Orange burst • bold',
         swatch: const Color(0xFFE63900), swatchEnd: const Color(0xFF7A0000),
         style: SlideStyle(
@@ -1132,7 +1138,7 @@ Map<String, List<_SlideStyleChoice>> _slideStyleChoices(
           showTextBox: false,
         ),
       ),
-      _SlideStyleChoice(
+      SlideStyleChoice(
         label: 'Brand Pill', subtitle: 'Primary colour • rounded box',
         swatch: const Color(0xFF111827), swatchEnd: const Color(0xFF111827),
         useGradient: false, hasTextBox: true,
@@ -1149,13 +1155,13 @@ Map<String, List<_SlideStyleChoice>> _slideStyleChoices(
       ),
     ],
     'blank': [
-      _SlideStyleChoice(
+      SlideStyleChoice(
         label: 'Pure Black', subtitle: 'Solid black • no text',
         swatch: Colors.black, swatchEnd: Colors.black, useGradient: false,
         style: SlideStyle(useGradient: false, overlay: SlideOverlay.none,
             showTextBox: false),
       ),
-      _SlideStyleChoice(
+      SlideStyleChoice(
         label: 'Deep Navy', subtitle: 'Navy gradient',
         swatch: const Color(0xFF0D1B3E), swatchEnd: const Color(0xFF000511),
         style: SlideStyle(
@@ -1165,7 +1171,7 @@ Map<String, List<_SlideStyleChoice>> _slideStyleChoices(
           showTextBox: false,
         ),
       ),
-      _SlideStyleChoice(
+      SlideStyleChoice(
         label: 'Brand Dark', subtitle: 'Primary colour fade',
         swatch: primary, swatchEnd: Color.lerp(primary, Colors.black, 0.60)!,
         style: SlideStyle(
@@ -1197,7 +1203,7 @@ class _StylePresetPicker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final choices = _slideStyleChoices(primary, secondary);
+    final choices = slideStyleChoices(primary, secondary);
     final options = choices[slide.type] ?? choices['title']!;
 
     return Row(
@@ -1210,6 +1216,7 @@ class _StylePresetPicker extends StatelessWidget {
               primary:   primary,
               onTap: () {
                 onStyle((_) => choice.style);
+                slide.styleOverridden = true;
                 onChanged();
               },
             ),
@@ -1221,7 +1228,7 @@ class _StylePresetPicker extends StatelessWidget {
 }
 
 class _StyleChoiceCard extends StatelessWidget {
-  final _SlideStyleChoice choice;
+  final SlideStyleChoice choice;
   final Color             primary;
   final VoidCallback      onTap;
 
@@ -1241,23 +1248,23 @@ class _StyleChoiceCard extends StatelessWidget {
             child: AspectRatio(
               aspectRatio: 16 / 9,
               child: CustomPaint(
-                painter: _ChoicePainter(choice: choice),
+                painter: SlideChoicePainter(choice: choice),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
                       horizontal: 6, vertical: 5),
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      _CBar(w: 0.80, h: 6, color:
+                      SlideCBar(w: 0.80, h: 6, color:
                           Colors.white.withValues(alpha: 0.90)),
                       const SizedBox(height: 4),
-                      _CBar(w: 0.65, h: 6, color:
+                      SlideCBar(w: 0.65, h: 6, color:
                           Colors.white.withValues(alpha: 0.90)),
                       const SizedBox(height: 5),
-                      _CBar(w: 0.55, h: 3.5, color:
+                      SlideCBar(w: 0.55, h: 3.5, color:
                           Colors.white.withValues(alpha: 0.50)),
                       const SizedBox(height: 3),
-                      _CBar(w: 0.45, h: 3.5, color:
+                      SlideCBar(w: 0.45, h: 3.5, color:
                           Colors.white.withValues(alpha: 0.50)),
                     ],
                   ),
@@ -1283,10 +1290,10 @@ class _StyleChoiceCard extends StatelessWidget {
   }
 }
 
-class _CBar extends StatelessWidget {
+class SlideCBar extends StatelessWidget {
   final double w, h;
   final Color  color;
-  const _CBar({required this.w, required this.h, required this.color});
+  const SlideCBar({required this.w, required this.h, required this.color});
 
   @override
   Widget build(BuildContext context) => FractionallySizedBox(
@@ -1299,9 +1306,9 @@ class _CBar extends StatelessWidget {
       );
 }
 
-class _ChoicePainter extends CustomPainter {
-  final _SlideStyleChoice choice;
-  const _ChoicePainter({required this.choice});
+class SlideChoicePainter extends CustomPainter {
+  final SlideStyleChoice choice;
+  const SlideChoicePainter({required this.choice});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1330,7 +1337,7 @@ class _ChoicePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_ChoicePainter old) =>
+  bool shouldRepaint(SlideChoicePainter old) =>
       old.choice.label != choice.label;
 }
 
@@ -1516,6 +1523,56 @@ class _ToggleBtn extends StatelessWidget {
           ),
         ),
       );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// OVERRIDE BANNER — shown when slide has diverged from master
+// ══════════════════════════════════════════════════════════════════════════════
+class _OverrideBanner extends StatelessWidget {
+  final Color        primary;
+  final VoidCallback onReset;
+  const _OverrideBanner({required this.primary, required this.onReset});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+      color: Colors.amber.shade50,
+      child: Row(
+        children: [
+          Icon(Icons.edit_note_rounded, size: 15, color: Colors.amber.shade800),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              'Custom style — different from master',
+              style: TextStyle(
+                fontSize: 11,
+                color: Colors.amber.shade900,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          GestureDetector(
+            onTap: onReset,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.amber.shade200,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text('Reset to master',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.amber.shade900,
+                  )),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 InputDecoration _dec(String hint) => InputDecoration(

@@ -428,4 +428,53 @@ class PresentationState extends ChangeNotifier with WidgetsBindingObserver {
     presenting = value;
     notifyListeners();
   }
+
+  // -- Master style -----------------------------------------------------------
+
+  /// Apply [master] to the deck: stamp all non-overridden slides, save.
+  Future<void> applyMasterStyle(
+    DeckMasterStyle master,
+    Color brandPrimary,
+    Color brandSecondary,
+    Map<String, List<SlideStyle>> Function(Color, Color) styleChoicesForType,
+  ) async {
+    if (openDeck == null) return;
+    master.writeToDeck(openDeck!);
+    final choices = styleChoicesForType(brandPrimary, brandSecondary);
+    for (final slide in openDeck!.slides) {
+      if (slide.styleOverridden) continue;
+      _stampSlide(slide, master, choices);
+    }
+    markDirty();
+  }
+
+  /// Reset a single slide back to the master style.
+  void resetSlideToMaster(
+    Slide slide,
+    Color brandPrimary,
+    Color brandSecondary,
+    Map<String, List<SlideStyle>> Function(Color, Color) styleChoicesForType,
+  ) {
+    if (openDeck == null) return;
+    slide.styleOverridden = false;
+    final master  = DeckMasterStyle.fromDeck(openDeck!, brandPrimary, brandSecondary);
+    final choices = styleChoicesForType(brandPrimary, brandSecondary);
+    _stampSlide(slide, master, choices);
+    _quickSaveSlide(slide);
+    markDirty();
+  }
+
+  void _stampSlide(
+    Slide slide,
+    DeckMasterStyle master,
+    Map<String, List<SlideStyle>> choices,
+  ) {
+    final typeChoices = choices[slide.type] ?? choices['title'] ?? [];
+    if (typeChoices.isEmpty) return;
+    final idx    = master.styleIndexFor(slide.type).clamp(0, typeChoices.length - 1);
+    final chosen = typeChoices[idx];
+    slide.bgColor   = master.resolveBg(const Color(0xFF1A3A5C));
+    slide.textColor = master.resolveText();
+    slide.style     = chosen.copyWith();
+  }
 }
