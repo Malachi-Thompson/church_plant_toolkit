@@ -1,12 +1,9 @@
 // lib/apps/presentation/views/slide_editor_view.dart
 //
-// Slide editor with a live preview and a tabbed style panel.
-//
-// Tabs:
-//   Content  — title / body / reference text fields
-//   Background — solid colour presets, gradient toggle, bg image upload/clear
-//   Text Style — font family, alignment, size scales, bold/italic, spacing
-//   Effects  — text shadow, text box, overlay pattern
+// Slide editor — live preview + tabbed style panel.
+// On mobile (< 600 px) the preview is smaller and the tab panel
+// is shown as a bottom sheet triggered by a floating action button,
+// keeping the full slide preview visible.
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -20,9 +17,9 @@ import '../../../theme.dart';
 // ENTRY POINT
 // ══════════════════════════════════════════════════════════════════════════════
 class SlideEditorView extends StatefulWidget {
-  final Slide        slide;
-  final Color        primary;
-  final Color        secondary;
+  final Slide slide;
+  final Color primary;
+  final Color secondary;
   final VoidCallback onChanged;
 
   const SlideEditorView({
@@ -83,91 +80,215 @@ class _SlideEditorViewState extends State<SlideEditorView>
   }
 
   void _updateStyle(SlideStyle Function(SlideStyle) updater) {
-    final updated = updater(widget.slide.style);
-    widget.slide.style = updated; // SlideStyle is mutable via copyWith
-    // Reassign so the slide holds the new instance
+    widget.slide.style = updater(widget.slide.style);
     _notify();
   }
 
-  // ── BUILD ──────────────────────────────────────────────────────────────────
-  @override
-  Widget build(BuildContext context) {
-    final slide = widget.slide;
-    final p     = widget.primary;
-    final s     = widget.secondary;
-
-    return Column(
-      children: [
-        // ── live preview ───────────────────────────────────────────────────
-        Padding(
-          padding: const EdgeInsets.fromLTRB(24, 20, 24, 12),
-          child: Center(
-            child: Container(
-              width:  480,
-              height: 270,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(
-                      color:      Colors.black.withValues(alpha: 0.18),
-                      blurRadius: 20)
+  void _openEditSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => DraggableScrollableSheet(
+        initialChildSize: 0.65,
+        minChildSize:     0.35,
+        maxChildSize:     0.92,
+        builder: (ctx, sc) => Container(
+          decoration: BoxDecoration(
+            color: Theme.of(context).scaffoldBackgroundColor,
+            borderRadius:
+                const BorderRadius.vertical(top: Radius.circular(20)),
+            boxShadow: [
+              BoxShadow(
+                  color:      Colors.black.withValues(alpha: 0.15),
+                  blurRadius: 20,
+                  offset:     const Offset(0, -4))
+            ],
+          ),
+          child: Column(
+            children: [
+              // drag handle
+              Center(
+                child: Container(
+                  margin: const EdgeInsets.symmetric(vertical: 10),
+                  width: 36, height: 4,
+                  decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(2)),
+                ),
+              ),
+              // Tab bar
+              TabBar(
+                controller: _tabs,
+                labelColor: widget.primary,
+                unselectedLabelColor: Colors.grey,
+                indicatorColor: widget.primary,
+                indicatorWeight: 2.5,
+                isScrollable: true,
+                tabAlignment: TabAlignment.start,
+                tabs: const [
+                  Tab(icon: Icon(Icons.text_fields, size: 17), text: 'Content'),
+                  Tab(icon: Icon(Icons.wallpaper, size: 17), text: 'Background'),
+                  Tab(icon: Icon(Icons.font_download, size: 17), text: 'Text Style'),
+                  Tab(icon: Icon(Icons.auto_awesome, size: 17), text: 'Effects'),
                 ],
               ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: SlideRenderer(slide: slide, fontScale: 1.0),
-              ),
-            ),
-          ),
-        ),
-
-        // ── tab bar ────────────────────────────────────────────────────────
-        TabBar(
-          controller:       _tabs,
-          labelColor:       p,
-          unselectedLabelColor: Colors.grey,
-          indicatorColor:   p,
-          indicatorWeight:  2.5,
-          tabs: const [
-            Tab(icon: Icon(Icons.text_fields, size: 18),  text: 'Content'),
-            Tab(icon: Icon(Icons.wallpaper,   size: 18),  text: 'Background'),
-            Tab(icon: Icon(Icons.font_download,size: 18), text: 'Text Style'),
-            Tab(icon: Icon(Icons.auto_awesome, size: 18), text: 'Effects'),
-          ],
-        ),
-
-        // ── tab bodies ─────────────────────────────────────────────────────
-        Expanded(
-          child: TabBarView(
-            controller: _tabs,
-            children: [
-              _ContentTab(
-                slide:     slide,
-                titleCtrl: _titleCtrl,
-                bodyCtrl:  _bodyCtrl,
-                refCtrl:   _refCtrl,
-                onChanged: _notify,
-              ),
-              _BackgroundTab(
-                slide:     slide,
-                primary:   p,
-                secondary: s,
-                onChanged: _notify,
-                onStyle:   _updateStyle,
-              ),
-              _TextStyleTab(
-                slide:    slide,
-                primary:  p,
-                onChanged: _notify,
-                onStyle:  _updateStyle,
-              ),
-              _EffectsTab(
-                slide:    slide,
-                primary:  p,
-                onChanged: _notify,
-                onStyle:  _updateStyle,
+              Expanded(
+                child: TabBarView(
+                  controller: _tabs,
+                  children: _tabBodies(context),
+                ),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _tabBodies(BuildContext context) => [
+    _ContentTab(
+      slide: widget.slide,
+      titleCtrl: _titleCtrl,
+      bodyCtrl: _bodyCtrl,
+      refCtrl: _refCtrl,
+      onChanged: _notify,
+    ),
+    _BackgroundTab(
+      slide: widget.slide,
+      primary: widget.primary,
+      secondary: widget.secondary,
+      onChanged: _notify,
+      onStyle: _updateStyle,
+    ),
+    _TextStyleTab(
+      slide: widget.slide,
+      primary: widget.primary,
+      onChanged: _notify,
+      onStyle: _updateStyle,
+    ),
+    _EffectsTab(
+      slide: widget.slide,
+      primary: widget.primary,
+      onChanged: _notify,
+      onStyle: _updateStyle,
+    ),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final slide   = widget.slide;
+    final p       = widget.primary;
+    final isWide  = MediaQuery.of(context).size.width >= 600;
+
+    if (isWide) {
+      // ── Desktop / tablet: two-panel layout ──────────────────────────────
+      // LayoutBuilder gives us the real panel dimensions so the preview
+      // never overflows horizontally OR vertically.
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          // Reserve space for TabBar (~48 px) + tabs min content (~160 px)
+          // + padding. Preview gets whatever is left, capped at 480 wide.
+          const tabBarH    = 48.0;
+          const tabMinH    = 160.0;
+          const vPadding   = 32.0; // top 20 + bottom 12
+          final availH     = constraints.maxHeight.isFinite
+              ? constraints.maxHeight : 600.0;
+          final maxPreviewH = (availH - tabBarH - tabMinH - vPadding)
+              .clamp(60.0, double.infinity);
+
+          // Width: fill panel up to 480 px, maintain 16:9
+          final availW   = constraints.maxWidth.isFinite
+              ? constraints.maxWidth : 480.0;
+          final byWidth  = (availW - 48).clamp(0.0, 480.0); // 24px h-padding each side
+          final byHeight = maxPreviewH * (16 / 9);
+          final previewW = byWidth < byHeight ? byWidth : byHeight;
+          final previewH = previewW * (9 / 16);
+
+          return Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 20, 24, 12),
+                child: Center(
+                  child: Container(
+                    width: previewW, height: previewH,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.18),
+                            blurRadius: 20)
+                      ],
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: SlideRenderer(slide: slide, fontScale: 1.0),
+                    ),
+                  ),
+                ),
+              ),
+              TabBar(
+                controller: _tabs,
+                labelColor: p,
+                unselectedLabelColor: Colors.grey,
+                indicatorColor: p,
+                indicatorWeight: 2.5,
+                tabs: const [
+                  Tab(icon: Icon(Icons.text_fields, size: 18), text: 'Content'),
+                  Tab(icon: Icon(Icons.wallpaper, size: 18), text: 'Background'),
+                  Tab(icon: Icon(Icons.font_download, size: 18), text: 'Text Style'),
+                  Tab(icon: Icon(Icons.auto_awesome, size: 18), text: 'Effects'),
+                ],
+              ),
+              Expanded(
+                child: TabBarView(
+                  controller: _tabs,
+                  children: _tabBodies(context),
+                ),
+              ),
+            ],
+          );
+        },
+      );
+    }
+
+    // ── Mobile: full-bleed preview + floating edit button ───────────────────
+    return Stack(
+      children: [
+        // Full preview
+        Positioned.fill(
+          child: SlideRenderer(slide: slide, fontScale: 1.0),
+        ),
+        // Edit FAB
+        Positioned(
+          bottom: 24, right: 16,
+          child: FloatingActionButton.extended(
+            heroTag: 'slide_edit_fab',
+            backgroundColor: p,
+            foregroundColor: contrastOn(p),
+            icon: const Icon(Icons.tune_rounded, size: 20),
+            label: const Text('Edit Slide',
+                style: TextStyle(fontWeight: FontWeight.bold)),
+            onPressed: () => _openEditSheet(context),
+          ),
+        ),
+        // Slide type chip
+        Positioned(
+          top: 12, left: 12,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: Colors.black54,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              slide.type.toUpperCase(),
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1.1),
+            ),
           ),
         ),
       ],
@@ -179,18 +300,15 @@ class _SlideEditorViewState extends State<SlideEditorView>
 // TAB 1 — CONTENT
 // ══════════════════════════════════════════════════════════════════════════════
 class _ContentTab extends StatelessWidget {
-  final Slide                 slide;
+  final Slide slide;
   final TextEditingController titleCtrl;
   final TextEditingController bodyCtrl;
   final TextEditingController refCtrl;
-  final VoidCallback          onChanged;
+  final VoidCallback onChanged;
 
   const _ContentTab({
-    required this.slide,
-    required this.titleCtrl,
-    required this.bodyCtrl,
-    required this.refCtrl,
-    required this.onChanged,
+    required this.slide, required this.titleCtrl, required this.bodyCtrl,
+    required this.refCtrl, required this.onChanged,
   });
 
   @override
@@ -203,20 +321,19 @@ class _ContentTab extends StatelessWidget {
           TextField(
             controller: titleCtrl,
             decoration: _dec('Title / Song section'),
-            onChanged:  (v) { slide.title = v; onChanged(); },
+            onChanged: (v) { slide.title = v; onChanged(); },
           ),
           const SizedBox(height: 12),
           TextField(
-            controller:  bodyCtrl,
-            maxLines:    6,
-            decoration:  _dec('Body text / Lyrics'),
-            onChanged:   (v) { slide.body = v; onChanged(); },
+            controller: bodyCtrl, maxLines: 6,
+            decoration: _dec('Body text / Lyrics'),
+            onChanged: (v) { slide.body = v; onChanged(); },
           ),
           const SizedBox(height: 12),
           TextField(
             controller: refCtrl,
             decoration: _dec('Reference / Scripture (optional)'),
-            onChanged:  (v) { slide.reference = v; onChanged(); },
+            onChanged: (v) { slide.reference = v; onChanged(); },
           ),
           const SizedBox(height: 20),
           _SectionLabel('Font size'),
@@ -224,9 +341,9 @@ class _ContentTab extends StatelessWidget {
             children: [
               Expanded(
                 child: Slider(
-                  value:     slide.fontSize,
-                  min:       16, max: 80, divisions: 16,
-                  label:     slide.fontSize.round().toString(),
+                  value: slide.fontSize,
+                  min: 16, max: 80, divisions: 16,
+                  label: slide.fontSize.round().toString(),
                   onChanged: (v) { slide.fontSize = v; onChanged(); },
                 ),
               ),
@@ -247,18 +364,13 @@ class _ContentTab extends StatelessWidget {
 // TAB 2 — BACKGROUND
 // ══════════════════════════════════════════════════════════════════════════════
 class _BackgroundTab extends StatefulWidget {
-  final Slide    slide;
-  final Color    primary;
-  final Color    secondary;
+  final Slide slide; final Color primary; final Color secondary;
   final VoidCallback onChanged;
   final void Function(SlideStyle Function(SlideStyle)) onStyle;
 
   const _BackgroundTab({
-    required this.slide,
-    required this.primary,
-    required this.secondary,
-    required this.onChanged,
-    required this.onStyle,
+    required this.slide, required this.primary, required this.secondary,
+    required this.onChanged, required this.onStyle,
   });
 
   @override
@@ -276,15 +388,10 @@ class _BackgroundTabState extends State<_BackgroundTab> {
       Color.lerp(p, Colors.black, 0.50)!,
       Color.lerp(p, Colors.black, 0.75)!,
       Color.lerp(p, Colors.white, 0.50)!,
-      Colors.black,
-      Colors.white,
-      Colors.blueGrey.shade900,
-      Colors.indigo.shade900,
-      Colors.purple.shade900,
-      Colors.teal.shade700,
-      const Color(0xFF1B1B2F),
-      const Color(0xFF2C3E50),
-      const Color(0xFF1A1A2E),
+      Colors.black, Colors.white,
+      Colors.blueGrey.shade900, Colors.indigo.shade900,
+      Colors.purple.shade900, Colors.teal.shade700,
+      const Color(0xFF1B1B2F), const Color(0xFF2C3E50), const Color(0xFF1A1A2E),
     ];
   }
 
@@ -292,21 +399,17 @@ class _BackgroundTabState extends State<_BackgroundTab> {
     setState(() => _pickingImage = true);
     try {
       final picker = ImagePicker();
-      final file   = await picker.pickImage(
-          source: ImageSource.gallery, imageQuality: 85);
+      final file   = await picker.pickImage(source: ImageSource.gallery, imageQuality: 85);
       if (file == null) return;
-
       String path;
       if (kIsWeb) {
-        // Convert to data URI for web
-        final bytes  = await file.readAsBytes();
-        final b64    = base64Encode(bytes);
-        final mime   = file.mimeType ?? 'image/jpeg';
+        final bytes = await file.readAsBytes();
+        final b64   = base64Encode(bytes);
+        final mime  = file.mimeType ?? 'image/jpeg';
         path = 'data:$mime;base64,$b64';
       } else {
         path = file.path;
       }
-
       widget.onStyle((s) => s.copyWith(bgImagePath: path));
     } catch (e) {
       if (mounted) {
@@ -330,8 +433,6 @@ class _BackgroundTabState extends State<_BackgroundTab> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-
-          // ── Colour presets ───────────────────────────────────────────────
           _SectionLabel('Background Colour'),
           const SizedBox(height: 10),
           Wrap(
@@ -346,10 +447,9 @@ class _BackgroundTabState extends State<_BackgroundTab> {
                   widget.onStyle((st) => st.copyWith(useGradient: false));
                 },
                 child: Container(
-                  width: 34, height: 34,
+                  width: 38, height: 38,
                   decoration: BoxDecoration(
-                    color:  c,
-                    shape:  BoxShape.circle,
+                    color: c, shape: BoxShape.circle,
                     border: Border.all(
                         color: sel ? widget.secondary : Colors.grey.shade300,
                         width: sel ? 3 : 1),
@@ -358,18 +458,14 @@ class _BackgroundTabState extends State<_BackgroundTab> {
               );
             }).toList(),
           ),
-
           const SizedBox(height: 20),
-
-          // ── Gradient ─────────────────────────────────────────────────────
           Row(
             children: [
               _SectionLabel('Gradient'),
               const Spacer(),
               Switch(
-                value:    s.useGradient,
-                onChanged: (v) => widget.onStyle((st) =>
-                    st.copyWith(useGradient: v)),
+                value: s.useGradient,
+                onChanged: (v) => widget.onStyle((st) => st.copyWith(useGradient: v)),
                 activeColor: p,
               ),
             ],
@@ -387,20 +483,15 @@ class _BackgroundTabState extends State<_BackgroundTab> {
                     Colors.indigo.shade900, Colors.purple.shade900,
                     Colors.teal.shade700, Colors.orange.shade800,
                   ].map((c) {
-                    final sel =
-                        s.gradientEnd.toARGB32() == c.toARGB32();
+                    final sel = s.gradientEnd.toARGB32() == c.toARGB32();
                     return GestureDetector(
-                      onTap: () => widget.onStyle(
-                          (st) => st.copyWith(gradientEnd: c)),
+                      onTap: () => widget.onStyle((st) => st.copyWith(gradientEnd: c)),
                       child: Container(
-                        width: 26, height: 26,
+                        width: 28, height: 28,
                         decoration: BoxDecoration(
-                          color:  c,
-                          shape:  BoxShape.circle,
+                          color: c, shape: BoxShape.circle,
                           border: Border.all(
-                              color: sel
-                                  ? widget.secondary
-                                  : Colors.grey.shade300,
+                              color: sel ? widget.secondary : Colors.grey.shade300,
                               width: sel ? 2.5 : 1),
                         ),
                       ),
@@ -430,16 +521,12 @@ class _BackgroundTabState extends State<_BackgroundTab> {
               ),
             ),
           ],
-
           const SizedBox(height: 20),
           const Divider(),
           const SizedBox(height: 12),
-
-          // ── Background image ─────────────────────────────────────────────
           _SectionLabel('Background Image'),
           const SizedBox(height: 10),
           if (s.bgImagePath != null && s.bgImagePath!.isNotEmpty) ...[
-            // preview strip
             ClipRRect(
               borderRadius: BorderRadius.circular(8),
               child: SizedBox(
@@ -453,16 +540,16 @@ class _BackgroundTabState extends State<_BackgroundTab> {
                 Expanded(
                   child: OutlinedButton.icon(
                     onPressed: _pickImage,
-                    icon:  const Icon(Icons.swap_horiz, size: 16),
+                    icon: const Icon(Icons.swap_horiz, size: 16),
                     label: const Text('Change image'),
                     style: OutlinedButton.styleFrom(foregroundColor: p),
                   ),
                 ),
                 const SizedBox(width: 8),
                 OutlinedButton.icon(
-                  onPressed: () => widget.onStyle(
-                      (st) => st.copyWith(clearBgImage: true)),
-                  icon:  const Icon(Icons.delete_outline, size: 16),
+                  onPressed: () =>
+                      widget.onStyle((st) => st.copyWith(clearBgImage: true)),
+                  icon: const Icon(Icons.delete_outline, size: 16),
                   label: const Text('Remove'),
                   style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
                 ),
@@ -473,15 +560,14 @@ class _BackgroundTabState extends State<_BackgroundTab> {
               width: double.infinity,
               child: ElevatedButton.icon(
                 onPressed: _pickingImage ? null : _pickImage,
-                icon:  _pickingImage
+                icon: _pickingImage
                     ? const SizedBox(
                         width: 16, height: 16,
                         child: CircularProgressIndicator(
                             strokeWidth: 2, color: Colors.white))
                     : const Icon(Icons.add_photo_alternate_outlined),
                 label: Text(_pickingImage
-                    ? 'Loading…'
-                    : 'Upload image from gallery'),
+                    ? 'Loading…' : 'Upload image from gallery'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: p,
                   foregroundColor: contrastOn(p),
@@ -492,36 +578,32 @@ class _BackgroundTabState extends State<_BackgroundTab> {
               ),
             ),
           ],
-
           if (s.bgImagePath != null && s.bgImagePath!.isNotEmpty) ...[
             const SizedBox(height: 14),
             _LabeledRow(
               label: 'Image fit',
               child: DropdownButton<SlideBgFit>(
-                value:   s.bgFit,
-                isDense: true,
+                value: s.bgFit, isDense: true,
                 items: const [
                   DropdownMenuItem(value: SlideBgFit.cover,   child: Text('Cover')),
                   DropdownMenuItem(value: SlideBgFit.contain, child: Text('Contain')),
                   DropdownMenuItem(value: SlideBgFit.fill,    child: Text('Stretch')),
                 ],
-                onChanged: (v) => widget.onStyle(
-                    (st) => st.copyWith(bgFit: v)),
+                onChanged: (v) =>
+                    widget.onStyle((st) => st.copyWith(bgFit: v)),
               ),
             ),
             _SliderRow(
-              label:    'Image opacity',
-              value:    s.bgImageOpacity,
+              label: 'Image opacity', value: s.bgImageOpacity,
               min: 0.1, max: 1.0,
-              onChanged: (v) => widget.onStyle(
-                  (st) => st.copyWith(bgImageOpacity: v)),
+              onChanged: (v) =>
+                  widget.onStyle((st) => st.copyWith(bgImageOpacity: v)),
             ),
             _SliderRow(
-              label:    'Tint darkness',
-              value:    s.bgTintOpacity,
+              label: 'Tint darkness', value: s.bgTintOpacity,
               min: 0.0, max: 0.9,
-              onChanged: (v) => widget.onStyle(
-                  (st) => st.copyWith(bgTintOpacity: v)),
+              onChanged: (v) =>
+                  widget.onStyle((st) => st.copyWith(bgTintOpacity: v)),
             ),
           ],
         ],
@@ -530,7 +612,6 @@ class _BackgroundTabState extends State<_BackgroundTab> {
   }
 }
 
-// ── image preview helper ──────────────────────────────────────────────────────
 class _BgImagePreview extends StatelessWidget {
   final String path;
   const _BgImagePreview({required this.path});
@@ -560,16 +641,13 @@ class _BgImagePreview extends StatelessWidget {
 // TAB 3 — TEXT STYLE
 // ══════════════════════════════════════════════════════════════════════════════
 class _TextStyleTab extends StatelessWidget {
-  final Slide    slide;
-  final Color    primary;
+  final Slide slide; final Color primary;
   final VoidCallback onChanged;
   final void Function(SlideStyle Function(SlideStyle)) onStyle;
 
   const _TextStyleTab({
-    required this.slide,
-    required this.primary,
-    required this.onChanged,
-    required this.onStyle,
+    required this.slide, required this.primary,
+    required this.onChanged, required this.onStyle,
   });
 
   @override
@@ -582,8 +660,6 @@ class _TextStyleTab extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-
-          // ── Font family ───────────────────────────────────────────────────
           _SectionLabel('Font Family'),
           const SizedBox(height: 8),
           Wrap(
@@ -591,39 +667,32 @@ class _TextStyleTab extends StatelessWidget {
             children: kSlideFonts.map((f) {
               final sel = s.fontFamily == f.fontFamily;
               return GestureDetector(
-                onTap: () => onStyle((st) =>
-                    st.copyWith(fontFamily: f.fontFamily)),
+                onTap: () =>
+                    onStyle((st) => st.copyWith(fontFamily: f.fontFamily)),
                 child: Container(
                   padding: const EdgeInsets.symmetric(
                       horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
                     color: sel
-                        ? p.withValues(alpha: 0.12)
-                        : Colors.grey.shade100,
+                        ? p.withValues(alpha: 0.12) : Colors.grey.shade100,
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(
-                        color: sel ? p : Colors.transparent,
-                        width: 1.5),
+                        color: sel ? p : Colors.transparent, width: 1.5),
                   ),
-                  child: Text(
-                    f.name,
-                    style: TextStyle(
-                      fontFamily:  f.fontFamily == 'sans-serif' ||
-                                   f.fontFamily == 'serif'
-                                  ? null : f.fontFamily,
-                      fontSize:    13,
-                      color:       sel ? p : null,
-                      fontWeight:  sel ? FontWeight.bold : null,
-                    ),
-                  ),
+                  child: Text(f.name,
+                      style: TextStyle(
+                        fontFamily: f.fontFamily == 'sans-serif' ||
+                                    f.fontFamily == 'serif'
+                            ? null : f.fontFamily,
+                        fontSize: 13,
+                        color: sel ? p : null,
+                        fontWeight: sel ? FontWeight.bold : null,
+                      )),
                 ),
               );
             }).toList(),
           ),
-
           const SizedBox(height: 20),
-
-          // ── Text alignment ────────────────────────────────────────────────
           _SectionLabel('Text Alignment'),
           const SizedBox(height: 8),
           Row(
@@ -632,109 +701,61 @@ class _TextStyleTab extends StatelessWidget {
                 Padding(
                   padding: const EdgeInsets.only(right: 8),
                   child: _AlignBtn(
-                    icon:    _alignIcon(a),
-                    tooltip: a.name,
-                    active:  s.textAlign == a,
-                    color:   p,
-                    onTap:   () => onStyle((st) => st.copyWith(textAlign: a)),
+                    icon: _alignIcon(a), tooltip: a.name,
+                    active: s.textAlign == a, color: p,
+                    onTap: () => onStyle((st) => st.copyWith(textAlign: a)),
                   ),
                 ),
             ],
           ),
-
           const SizedBox(height: 20),
-
-          // ── Title style ───────────────────────────────────────────────────
           _SectionLabel('Title'),
           const SizedBox(height: 8),
           Row(
             children: [
-              _ToggleBtn(
-                label:  'B',
-                bold:   true,
-                active: s.titleBold,
-                color:  p,
-                onTap:  () => onStyle(
-                    (st) => st.copyWith(titleBold: !s.titleBold)),
-              ),
+              _ToggleBtn(label: 'B', bold: true, active: s.titleBold, color: p,
+                  onTap: () => onStyle((st) => st.copyWith(titleBold: !s.titleBold))),
               const SizedBox(width: 8),
-              _ToggleBtn(
-                label:  'I',
-                italic: true,
-                active: s.titleItalic,
-                color:  p,
-                onTap:  () => onStyle(
-                    (st) => st.copyWith(titleItalic: !s.titleItalic)),
-              ),
+              _ToggleBtn(label: 'I', italic: true, active: s.titleItalic, color: p,
+                  onTap: () => onStyle((st) => st.copyWith(titleItalic: !s.titleItalic))),
             ],
           ),
-          _SliderRow(
-            label:    'Title scale',
-            value:    s.titleScale,
-            min: 0.5, max: 2.0,
-            divisions: 15,
-            onChanged: (v) => onStyle((st) => st.copyWith(titleScale: v)),
-          ),
-
+          _SliderRow(label: 'Title scale', value: s.titleScale,
+              min: 0.5, max: 2.0, divisions: 15,
+              onChanged: (v) => onStyle((st) => st.copyWith(titleScale: v))),
           const SizedBox(height: 12),
-
-          // ── Body style ────────────────────────────────────────────────────
           _SectionLabel('Body'),
           const SizedBox(height: 8),
           Row(
             children: [
-              _ToggleBtn(
-                label:  'B',
-                bold:   true,
-                active: s.bodyBold,
-                color:  p,
-                onTap:  () => onStyle(
-                    (st) => st.copyWith(bodyBold: !s.bodyBold)),
-              ),
+              _ToggleBtn(label: 'B', bold: true, active: s.bodyBold, color: p,
+                  onTap: () => onStyle((st) => st.copyWith(bodyBold: !s.bodyBold))),
               const SizedBox(width: 8),
-              _ToggleBtn(
-                label:  'I',
-                italic: true,
-                active: s.bodyItalic,
-                color:  p,
-                onTap:  () => onStyle(
-                    (st) => st.copyWith(bodyItalic: !s.bodyItalic)),
-              ),
+              _ToggleBtn(label: 'I', italic: true, active: s.bodyItalic, color: p,
+                  onTap: () => onStyle((st) => st.copyWith(bodyItalic: !s.bodyItalic))),
             ],
           ),
-          _SliderRow(
-            label:    'Body scale',
-            value:    s.bodyScale,
-            min: 0.5, max: 2.0,
-            divisions: 15,
-            onChanged: (v) => onStyle((st) => st.copyWith(bodyScale: v)),
-          ),
-
+          _SliderRow(label: 'Body scale', value: s.bodyScale,
+              min: 0.5, max: 2.0, divisions: 15,
+              onChanged: (v) => onStyle((st) => st.copyWith(bodyScale: v))),
           const SizedBox(height: 12),
-
-          // ── Text colour ───────────────────────────────────────────────────
           _SectionLabel('Text Colour'),
           const SizedBox(height: 8),
           Wrap(
             spacing: 8, runSpacing: 8,
             children: [
-              Colors.white,
-              Colors.black,
-              Colors.yellow.shade200,
-              Colors.amber,
-              Colors.lightBlue.shade100,
-              Colors.grey.shade300,
-              Colors.orange.shade200,
-              const Color(0xFFD4A843),
+              Colors.white, Colors.black,
+              Colors.yellow.shade200, Colors.amber,
+              Colors.lightBlue.shade100, Colors.grey.shade300,
+              Colors.orange.shade200, const Color(0xFFD4A843),
             ].map((c) {
               final sel = slide.textColor.toARGB32() == c.toARGB32();
               return GestureDetector(
                 onTap: () { slide.textColor = c; onChanged(); },
                 child: Container(
-                  width: 30, height: 30,
+                  width: 34, height: 34,
                   decoration: BoxDecoration(
-                    color:  c,
-                    shape:  BoxShape.circle,
+                    color: c, shape: BoxShape.circle,
                     border: Border.all(
                         color: sel ? p : Colors.grey.shade400,
                         width: sel ? 3 : 1),
@@ -747,27 +768,16 @@ class _TextStyleTab extends StatelessWidget {
               );
             }).toList(),
           ),
-
           const SizedBox(height: 20),
-
-          // ── Spacing ───────────────────────────────────────────────────────
           _SectionLabel('Spacing'),
-          _SliderRow(
-            label:    'Letter spacing',
-            value:    s.letterSpacing,
-            min: -1.0, max: 6.0,
-            divisions: 14,
-            onChanged: (v) => onStyle(
-                (st) => st.copyWith(letterSpacing: v)),
-          ),
-          _SliderRow(
-            label:    'Line height',
-            value:    s.lineHeight,
-            min: 1.0, max: 3.0,
-            divisions: 20,
-            onChanged: (v) => onStyle(
-                (st) => st.copyWith(lineHeight: v)),
-          ),
+          _SliderRow(label: 'Letter spacing', value: s.letterSpacing,
+              min: -1.0, max: 6.0, divisions: 14,
+              onChanged: (v) =>
+                  onStyle((st) => st.copyWith(letterSpacing: v))),
+          _SliderRow(label: 'Line height', value: s.lineHeight,
+              min: 1.0, max: 3.0, divisions: 20,
+              onChanged: (v) =>
+                  onStyle((st) => st.copyWith(lineHeight: v))),
         ],
       ),
     );
@@ -786,16 +796,13 @@ class _TextStyleTab extends StatelessWidget {
 // TAB 4 — EFFECTS
 // ══════════════════════════════════════════════════════════════════════════════
 class _EffectsTab extends StatelessWidget {
-  final Slide    slide;
-  final Color    primary;
+  final Slide slide; final Color primary;
   final VoidCallback onChanged;
   final void Function(SlideStyle Function(SlideStyle)) onStyle;
 
   const _EffectsTab({
-    required this.slide,
-    required this.primary,
-    required this.onChanged,
-    required this.onStyle,
+    required this.slide, required this.primary,
+    required this.onChanged, required this.onStyle,
   });
 
   @override
@@ -808,88 +815,56 @@ class _EffectsTab extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-
-          // ── Text shadow ───────────────────────────────────────────────────
-          _SwitchRow(
-            label:   'Text Shadow',
-            value:   s.textShadow,
-            color:   p,
-            onChanged: (v) => onStyle((st) => st.copyWith(textShadow: v)),
-          ),
+          _SwitchRow(label: 'Text Shadow', value: s.textShadow, color: p,
+              onChanged: (v) =>
+                  onStyle((st) => st.copyWith(textShadow: v))),
           if (s.textShadow) ...[
-            _SliderRow(
-              label:    'Shadow blur',
-              value:    s.shadowBlur,
-              min: 1, max: 20,
-              onChanged: (v) => onStyle(
-                  (st) => st.copyWith(shadowBlur: v)),
-            ),
+            _SliderRow(label: 'Shadow blur', value: s.shadowBlur, min: 1, max: 20,
+                onChanged: (v) =>
+                    onStyle((st) => st.copyWith(shadowBlur: v))),
             _ColorRow(
-              label:   'Shadow colour',
-              colors:  [Colors.black, Colors.white,
-                        Colors.black87, Colors.blueGrey.shade900],
-              current: s.shadowColor,
-              primary: p,
-              onPick:  (c) => onStyle((st) => st.copyWith(shadowColor: c)),
+              label: 'Shadow colour',
+              colors: [Colors.black, Colors.white,
+                       Colors.black87, Colors.blueGrey.shade900],
+              current: s.shadowColor, primary: p,
+              onPick: (c) =>
+                  onStyle((st) => st.copyWith(shadowColor: c)),
             ),
           ],
-
           const SizedBox(height: 16),
           const Divider(),
           const SizedBox(height: 12),
-
-          // ── Text box ──────────────────────────────────────────────────────
-          _SwitchRow(
-            label:     'Text Box Background',
-            value:     s.showTextBox,
-            color:     p,
-            onChanged: (v) => onStyle((st) => st.copyWith(showTextBox: v)),
-          ),
+          _SwitchRow(label: 'Text Box Background', value: s.showTextBox, color: p,
+              onChanged: (v) =>
+                  onStyle((st) => st.copyWith(showTextBox: v))),
           if (s.showTextBox) ...[
             _ColorRow(
-              label:   'Box colour',
-              colors:  [Colors.black, Colors.white,
-                        Colors.indigo.shade900, Colors.blueGrey.shade900,
-                        Colors.brown.shade900, const Color(0xFF1A3A5C)],
-              current: s.textBoxColor,
-              primary: p,
-              onPick:  (c) => onStyle((st) => st.copyWith(textBoxColor: c)),
+              label: 'Box colour',
+              colors: [Colors.black, Colors.white,
+                       Colors.indigo.shade900, Colors.blueGrey.shade900,
+                       Colors.brown.shade900, const Color(0xFF1A3A5C)],
+              current: s.textBoxColor, primary: p,
+              onPick: (c) =>
+                  onStyle((st) => st.copyWith(textBoxColor: c)),
             ),
-            _SliderRow(
-              label:    'Box opacity',
-              value:    s.textBoxOpacity,
-              min: 0.1, max: 1.0,
-              onChanged: (v) => onStyle(
-                  (st) => st.copyWith(textBoxOpacity: v)),
-            ),
-            _SliderRow(
-              label:    'Corner radius',
-              value:    s.textBoxRadius,
-              min: 0, max: 30,
-              onChanged: (v) => onStyle(
-                  (st) => st.copyWith(textBoxRadius: v)),
-            ),
-            _SliderRow(
-              label:    'Horizontal padding',
-              value:    s.textBoxPaddingH,
-              min: 8, max: 60,
-              onChanged: (v) => onStyle(
-                  (st) => st.copyWith(textBoxPaddingH: v)),
-            ),
-            _SliderRow(
-              label:    'Vertical padding',
-              value:    s.textBoxPaddingV,
-              min: 4, max: 40,
-              onChanged: (v) => onStyle(
-                  (st) => st.copyWith(textBoxPaddingV: v)),
-            ),
+            _SliderRow(label: 'Box opacity', value: s.textBoxOpacity, min: 0.1, max: 1.0,
+                onChanged: (v) =>
+                    onStyle((st) => st.copyWith(textBoxOpacity: v))),
+            _SliderRow(label: 'Corner radius', value: s.textBoxRadius, min: 0, max: 30,
+                onChanged: (v) =>
+                    onStyle((st) => st.copyWith(textBoxRadius: v))),
+            _SliderRow(label: 'Horizontal padding', value: s.textBoxPaddingH,
+                min: 8, max: 60,
+                onChanged: (v) =>
+                    onStyle((st) => st.copyWith(textBoxPaddingH: v))),
+            _SliderRow(label: 'Vertical padding', value: s.textBoxPaddingV,
+                min: 4, max: 40,
+                onChanged: (v) =>
+                    onStyle((st) => st.copyWith(textBoxPaddingV: v))),
           ],
-
           const SizedBox(height: 16),
           const Divider(),
           const SizedBox(height: 12),
-
-          // ── Overlay pattern ───────────────────────────────────────────────
           _SectionLabel('Background Pattern Overlay'),
           const SizedBox(height: 10),
           Wrap(
@@ -899,37 +874,29 @@ class _EffectsTab extends StatelessWidget {
               return GestureDetector(
                 onTap: () => onStyle((st) => st.copyWith(overlay: o)),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
                     color: sel
-                        ? p.withValues(alpha: 0.12)
-                        : Colors.grey.shade100,
+                        ? p.withValues(alpha: 0.12) : Colors.grey.shade100,
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(
-                        color: sel ? p : Colors.transparent,
-                        width: 1.5),
+                        color: sel ? p : Colors.transparent, width: 1.5),
                   ),
-                  child: Text(
-                    _overlayLabel(o),
-                    style: TextStyle(
-                        fontSize: 12,
-                        color:    sel ? p : null,
-                        fontWeight: sel ? FontWeight.bold : null),
-                  ),
+                  child: Text(_overlayLabel(o),
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: sel ? p : null,
+                          fontWeight: sel ? FontWeight.bold : null)),
                 ),
               );
             }).toList(),
           ),
           if (s.overlay != SlideOverlay.none) ...[
             const SizedBox(height: 10),
-            _SliderRow(
-              label:    'Pattern opacity',
-              value:    s.overlayOpacity,
-              min: 0.02, max: 0.35,
-              onChanged: (v) => onStyle(
-                  (st) => st.copyWith(overlayOpacity: v)),
-            ),
+            _SliderRow(label: 'Pattern opacity', value: s.overlayOpacity,
+                min: 0.02, max: 0.35,
+                onChanged: (v) =>
+                    onStyle((st) => st.copyWith(overlayOpacity: v))),
           ],
         ],
       ),
@@ -951,7 +918,6 @@ class _EffectsTab extends StatelessWidget {
 // ══════════════════════════════════════════════════════════════════════════════
 // SMALL SHARED WIDGETS
 // ══════════════════════════════════════════════════════════════════════════════
-
 class _SectionLabel extends StatelessWidget {
   final String text;
   const _SectionLabel(this.text);
@@ -961,20 +927,13 @@ class _SectionLabel extends StatelessWidget {
 }
 
 class _SliderRow extends StatelessWidget {
-  final String   label;
-  final double   value;
-  final double   min;
-  final double   max;
-  final int?     divisions;
+  final String label; final double value;
+  final double min; final double max; final int? divisions;
   final ValueChanged<double> onChanged;
 
   const _SliderRow({
-    required this.label,
-    required this.value,
-    required this.min,
-    required this.max,
-    required this.onChanged,
-    this.divisions,
+    required this.label, required this.value, required this.min,
+    required this.max, required this.onChanged, this.divisions,
   });
 
   @override
@@ -987,9 +946,8 @@ class _SliderRow extends StatelessWidget {
           ),
           Expanded(
             child: Slider(
-              value:     value.clamp(min, max),
-              min:       min,
-              max:       max,
+              value: value.clamp(min, max),
+              min: min, max: max,
               divisions: divisions ?? 20,
               onChanged: onChanged,
             ),
@@ -1004,24 +962,19 @@ class _SliderRow extends StatelessWidget {
 }
 
 class _SwitchRow extends StatelessWidget {
-  final String  label;
-  final bool    value;
-  final Color   color;
+  final String label; final bool value; final Color color;
   final ValueChanged<bool> onChanged;
 
   const _SwitchRow({
-    required this.label,
-    required this.value,
-    required this.color,
-    required this.onChanged,
+    required this.label, required this.value,
+    required this.color, required this.onChanged,
   });
 
   @override
   Widget build(BuildContext context) => Row(
         children: [
-          Text(label,
-              style: const TextStyle(fontWeight: FontWeight.bold,
-                  fontSize: 13)),
+          Text(label, style: const TextStyle(
+              fontWeight: FontWeight.bold, fontSize: 13)),
           const Spacer(),
           Switch(value: value, onChanged: onChanged, activeColor: color),
         ],
@@ -1029,18 +982,12 @@ class _SwitchRow extends StatelessWidget {
 }
 
 class _ColorRow extends StatelessWidget {
-  final String       label;
-  final List<Color>  colors;
-  final Color        current;
-  final Color        primary;
-  final ValueChanged<Color> onPick;
+  final String label; final List<Color> colors;
+  final Color current; final Color primary; final ValueChanged<Color> onPick;
 
   const _ColorRow({
-    required this.label,
-    required this.colors,
-    required this.current,
-    required this.primary,
-    required this.onPick,
+    required this.label, required this.colors,
+    required this.current, required this.primary, required this.onPick,
   });
 
   @override
@@ -1058,11 +1005,10 @@ class _ColorRow extends StatelessWidget {
               return GestureDetector(
                 onTap: () => onPick(c),
                 child: Container(
-                  width: 24, height: 24,
+                  width: 28, height: 28,
                   margin: const EdgeInsets.only(right: 6),
                   decoration: BoxDecoration(
-                    color:  c,
-                    shape:  BoxShape.circle,
+                    color: c, shape: BoxShape.circle,
                     border: Border.all(
                         color: sel ? primary : Colors.grey.shade400,
                         width: sel ? 2.5 : 1),
@@ -1076,8 +1022,7 @@ class _ColorRow extends StatelessWidget {
 }
 
 class _LabeledRow extends StatelessWidget {
-  final String label;
-  final Widget child;
+  final String label; final Widget child;
   const _LabeledRow({required this.label, required this.child});
 
   @override
@@ -1097,89 +1042,65 @@ class _LabeledRow extends StatelessWidget {
 }
 
 class _AlignBtn extends StatelessWidget {
-  final IconData     icon;
-  final String       tooltip;
-  final bool         active;
-  final Color        color;
-  final VoidCallback onTap;
+  final IconData icon; final String tooltip; final bool active;
+  final Color color; final VoidCallback onTap;
 
   const _AlignBtn({
-    required this.icon,
-    required this.tooltip,
-    required this.active,
-    required this.color,
-    required this.onTap,
+    required this.icon, required this.tooltip, required this.active,
+    required this.color, required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) => GestureDetector(
         onTap: onTap,
         child: Container(
-          width:  38, height: 38,
+          width: 42, height: 42,
           decoration: BoxDecoration(
-            color: active
-                ? color.withValues(alpha: 0.12)
-                : Colors.grey.shade100,
+            color: active ? color.withValues(alpha: 0.12) : Colors.grey.shade100,
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
-                color: active ? color : Colors.transparent,
-                width: 1.5),
+                color: active ? color : Colors.transparent, width: 1.5),
           ),
-          child: Icon(icon,
-              size: 18, color: active ? color : Colors.grey),
+          child: Icon(icon, size: 18, color: active ? color : Colors.grey),
         ),
       );
 }
 
 class _ToggleBtn extends StatelessWidget {
-  final String  label;
-  final bool    bold;
-  final bool    italic;
-  final bool    active;
-  final Color   color;
-  final VoidCallback onTap;
+  final String label; final bool bold; final bool italic;
+  final bool active; final Color color; final VoidCallback onTap;
 
   const _ToggleBtn({
-    required this.label,
-    required this.active,
-    required this.color,
-    required this.onTap,
-    this.bold   = false,
-    this.italic = false,
+    required this.label, required this.active, required this.color,
+    required this.onTap, this.bold = false, this.italic = false,
   });
 
   @override
   Widget build(BuildContext context) => GestureDetector(
         onTap: onTap,
         child: Container(
-          width:  38, height: 38,
+          width: 42, height: 42,
           decoration: BoxDecoration(
-            color: active
-                ? color.withValues(alpha: 0.12)
-                : Colors.grey.shade100,
+            color: active ? color.withValues(alpha: 0.12) : Colors.grey.shade100,
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
-                color: active ? color : Colors.transparent,
-                width: 1.5),
+                color: active ? color : Colors.transparent, width: 1.5),
           ),
           child: Center(
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize:   16,
-                fontWeight: bold   ? FontWeight.bold   : FontWeight.normal,
-                fontStyle:  italic ? FontStyle.italic  : FontStyle.normal,
-                color:      active ? color : Colors.grey,
-              ),
-            ),
+            child: Text(label,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: bold   ? FontWeight.bold  : FontWeight.normal,
+                  fontStyle:  italic ? FontStyle.italic : FontStyle.normal,
+                  color: active ? color : Colors.grey,
+                )),
           ),
         ),
       );
 }
 
 InputDecoration _dec(String hint) => InputDecoration(
-      labelText:      hint,
-      border:         const OutlineInputBorder(),
-      contentPadding: const EdgeInsets.symmetric(
-          horizontal: 14, vertical: 12),
+      labelText: hint,
+      border: const OutlineInputBorder(),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
     );

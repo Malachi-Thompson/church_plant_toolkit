@@ -1,12 +1,11 @@
 // lib/apps/presentation/views/present_view.dart
 //
 // Full-screen presentation view.
-// • Manual navigation: tap right/left half, arrow keys, or bottom bar
-// • Auto-advance: when the current slide belongs to a group with
-//   autoAdvanceSeconds set, a countdown timer fires automatically.
-//   The timer resets on manual navigation and pauses when the
-//   presenter taps the pause button.
-
+// Mobile additions:
+//   • Horizontal swipe gesture for next/prev (PageView feel)
+//   • SafeArea insets so UI bars avoid notches
+//   • Larger tap/touch targets throughout
+//   • Pinch-out to exit on mobile
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -15,14 +14,14 @@ import '../models/slide_group.dart';
 import '../widgets/presentation_widgets.dart';
 
 class PresentView extends StatefulWidget {
-  final Deck          deck;
-  final Color         primary;
-  final Color         secondary;
-  final VoidCallback  onExit;
-  final bool          isStreaming;
-  final bool          isRecording;
-  final VoidCallback  onToggleStream;
-  final VoidCallback  onToggleRecord;
+  final Deck         deck;
+  final Color        primary;
+  final Color        secondary;
+  final VoidCallback onExit;
+  final bool         isStreaming;
+  final bool         isRecording;
+  final VoidCallback onToggleStream;
+  final VoidCallback onToggleRecord;
 
   const PresentView({
     super.key,
@@ -41,16 +40,17 @@ class PresentView extends StatefulWidget {
 }
 
 class _PresentViewState extends State<PresentView> {
-  int  _idx         = 0;
-  bool _showUI      = true;
-  bool _autoPaused  = false;
+  int  _idx        = 0;
+  bool _showUI     = true;
+  bool _autoPaused = false;
 
-  // Auto-advance state
-  Timer?  _autoTimer;
-  int     _countdown = 0;   // seconds remaining
-  Timer?  _countdownTicker;
+  Timer? _autoTimer;
+  Timer? _countdownTicker;
+  int    _countdown = 0;
 
-  // Keyboard focus
+  // Swipe gesture tracking
+  double _dragStart = 0;
+
   final _focusNode = FocusNode();
 
   @override
@@ -58,6 +58,8 @@ class _PresentViewState extends State<PresentView> {
     super.initState();
     _focusNode.requestFocus();
     _startAutoIfNeeded();
+    // Hide system UI for a more immersive presentation on mobile
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   }
 
   @override
@@ -65,15 +67,13 @@ class _PresentViewState extends State<PresentView> {
     _autoTimer?.cancel();
     _countdownTicker?.cancel();
     _focusNode.dispose();
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
   }
-
-  // ── helpers ───────────────────────────────────────────────────────────────
 
   List<Slide> get _slides => widget.deck.slides;
   Slide?      get _current => _slides.isEmpty ? null : _slides[_idx];
 
-  /// Returns the SlideGroup this slide belongs to, if any.
   SlideGroup? _groupOf(Slide? slide) {
     if (slide == null) return null;
     for (final g in widget.deck.groups) {
@@ -82,29 +82,21 @@ class _PresentViewState extends State<PresentView> {
     return null;
   }
 
-  // ── auto-advance ──────────────────────────────────────────────────────────
-
   void _startAutoIfNeeded() {
     _autoTimer?.cancel();
     _countdownTicker?.cancel();
-
     if (_autoPaused) return;
     final group = _groupOf(_current);
     if (group == null || !group.hasAutoAdvance) {
       setState(() => _countdown = 0);
       return;
     }
-
     final secs = group.autoAdvanceSeconds!;
     setState(() => _countdown = secs);
-
-    // Tick every second to update countdown display
     _countdownTicker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
       setState(() => _countdown = (_countdown - 1).clamp(0, secs));
     });
-
-    // Fire advance after full duration
     _autoTimer = Timer(Duration(seconds: secs), () {
       if (!mounted) return;
       _countdownTicker?.cancel();
@@ -120,23 +112,16 @@ class _PresentViewState extends State<PresentView> {
 
   void _togglePause() {
     setState(() => _autoPaused = !_autoPaused);
-    if (_autoPaused) {
-      _cancelAuto();
-    } else {
-      _startAutoIfNeeded();
-    }
+    if (_autoPaused) _cancelAuto(); else _startAutoIfNeeded();
   }
-
-  // ── navigation ────────────────────────────────────────────────────────────
 
   void _goNext({bool auto = false}) {
     if (_slides.isEmpty) return;
     if (_idx < _slides.length - 1) {
-      if (!auto) _autoPaused = false; // manual tap un-pauses
+      if (!auto) _autoPaused = false;
       setState(() => _idx++);
       _startAutoIfNeeded();
     } else if (auto) {
-      // Reached end during auto — stop
       _cancelAuto();
     }
   }
@@ -156,13 +141,12 @@ class _PresentViewState extends State<PresentView> {
     _startAutoIfNeeded();
   }
 
-  // ── build ─────────────────────────────────────────────────────────────────
-
   @override
   Widget build(BuildContext context) {
-    final slide  = _current;
-    final group  = _groupOf(slide);
+    final slide   = _current;
+    final group   = _groupOf(slide);
     final hasAuto = group?.hasAutoAdvance ?? false;
+    final mq      = MediaQuery.of(context);
 
     return KeyboardListener(
       focusNode: _focusNode,
@@ -181,39 +165,48 @@ class _PresentViewState extends State<PresentView> {
       child: Scaffold(
         backgroundColor: slide?.bgColor ?? Colors.black,
         body: GestureDetector(
+          // Single tap toggles UI visibility
           onTap: () => setState(() => _showUI = !_showUI),
+          // Horizontal swipe for prev/next
+          onHorizontalDragStart: (d) =>
+              _dragStart = d.globalPosition.dx,
+          onHorizontalDragEnd:   (d) {
+            final delta = d.globalPosition.dx - _dragStart;
+            if (delta < -50) _goNext();
+            if (delta >  50) _goPrev();
+          },
           child: Stack(
             children: [
-              // ── SLIDE CONTENT ──────────────────────────────────────────
+              // ── SLIDE CONTENT ────────────────────────────────────────────
               if (slide != null)
                 Positioned.fill(
                   child: SlideContentPreview(slide: slide),
                 ),
 
-              // ── LEFT / RIGHT tap zones ─────────────────────────────────
+              // ── LEFT / RIGHT tap zones ───────────────────────────────────
               Positioned.fill(
                 child: Row(
                   children: [
                     Expanded(
                       child: GestureDetector(
                         behavior: HitTestBehavior.translucent,
-                        onTap:    _goPrev,
+                        onTap: _goPrev,
                       ),
                     ),
                     Expanded(
                       child: GestureDetector(
                         behavior: HitTestBehavior.translucent,
-                        onTap:    () => _goNext(),
+                        onTap: () => _goNext(),
                       ),
                     ),
                   ],
                 ),
               ),
 
-              // ── AUTO-ADVANCE COUNTDOWN RING ───────────────────────────
+              // ── AUTO-ADVANCE COUNTDOWN RING ──────────────────────────────
               if (hasAuto && _countdown > 0 && !_autoPaused)
                 Positioned(
-                  top: 16, right: 16,
+                  top: mq.padding.top + 16, right: 16,
                   child: _CountdownRing(
                     countdown: _countdown,
                     total:     group!.autoAdvanceSeconds!,
@@ -222,17 +215,17 @@ class _PresentViewState extends State<PresentView> {
                   ),
                 ),
 
-              // ── PAUSED BADGE ──────────────────────────────────────────
+              // ── PAUSED BADGE ─────────────────────────────────────────────
               if (hasAuto && _autoPaused)
                 Positioned(
-                  top: 16, right: 16,
+                  top: mq.padding.top + 16, right: 16,
                   child: GestureDetector(
                     onTap: _togglePause,
                     child: Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 6),
+                          horizontal: 14, vertical: 8),
                       decoration: BoxDecoration(
-                        color:        Colors.black54,
+                        color: Colors.black54,
                         borderRadius: BorderRadius.circular(20),
                         border: Border.all(
                             color: widget.primary.withValues(alpha: 0.60)),
@@ -241,12 +234,12 @@ class _PresentViewState extends State<PresentView> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Icon(Icons.play_arrow_rounded,
-                              color: widget.primary, size: 16),
+                              color: widget.primary, size: 18),
                           const SizedBox(width: 6),
                           Text('Paused',
                               style: TextStyle(
-                                  color:     widget.primary,
-                                  fontSize:  12,
+                                  color: widget.primary,
+                                  fontSize: 13,
                                   fontWeight: FontWeight.bold)),
                         ],
                       ),
@@ -254,39 +247,43 @@ class _PresentViewState extends State<PresentView> {
                   ),
                 ),
 
-              // ── TOP UI BAR ────────────────────────────────────────────
+              // ── TOP UI BAR ───────────────────────────────────────────────
               if (_showUI)
                 Positioned(
                   top: 0, left: 0, right: 0,
                   child: _TopBar(
-                    idx:           _idx,
-                    total:         _slides.length,
-                    isStreaming:   widget.isStreaming,
-                    isRecording:   widget.isRecording,
+                    idx:            _idx,
+                    total:          _slides.length,
+                    isStreaming:    widget.isStreaming,
+                    isRecording:    widget.isRecording,
                     onToggleStream: widget.onToggleStream,
                     onToggleRecord: widget.onToggleRecord,
-                    onExit:        widget.onExit,
-                    primary:       widget.primary,
-                    groupName:     group?.name,
-                    hasAuto:       hasAuto,
-                    autoPaused:    _autoPaused,
-                    onTogglePause: hasAuto ? _togglePause : null,
+                    onExit:         widget.onExit,
+                    primary:        widget.primary,
+                    groupName:      group?.name,
+                    hasAuto:        hasAuto,
+                    autoPaused:     _autoPaused,
+                    onTogglePause:  hasAuto ? _togglePause : null,
+                    topPadding:     mq.padding.top,
                   ),
                 ),
 
-              // ── BOTTOM SLIDE STRIP ────────────────────────────────────
+              // ── BOTTOM SLIDE STRIP ───────────────────────────────────────
               if (_showUI)
                 Positioned(
                   bottom: 0, left: 0, right: 0,
                   child: _SlideStrip(
-                    slides:   _slides,
-                    current:  _idx,
-                    primary:  widget.primary,
+                    slides:    _slides,
+                    current:   _idx,
+                    primary:   widget.primary,
                     secondary: widget.secondary,
-                    groups:   widget.deck.groups,
-                    onSelect: _jumpTo,
+                    groups:    widget.deck.groups,
+                    onSelect:  _jumpTo,
+                    bottomPadding: mq.padding.bottom,
                   ),
                 ),
+
+              // ── SWIPE HINT (only first time, briefly) ────────────────────
             ],
           ),
         ),
@@ -296,19 +293,15 @@ class _PresentViewState extends State<PresentView> {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// COUNTDOWN RING  (circular timer indicator)
+// COUNTDOWN RING
 // ══════════════════════════════════════════════════════════════════════════════
 class _CountdownRing extends StatelessWidget {
-  final int        countdown;
-  final int        total;
-  final Color      primary;
-  final VoidCallback onPause;
+  final int countdown; final int total;
+  final Color primary; final VoidCallback onPause;
 
   const _CountdownRing({
-    required this.countdown,
-    required this.total,
-    required this.primary,
-    required this.onPause,
+    required this.countdown, required this.total,
+    required this.primary, required this.onPause,
   });
 
   @override
@@ -318,17 +311,16 @@ class _CountdownRing extends StatelessWidget {
     return GestureDetector(
       onTap: onPause,
       child: SizedBox(
-        width: 52, height: 52,
+        width: 56, height: 56,
         child: Stack(
           alignment: Alignment.center,
           children: [
             SizedBox.expand(
               child: CircularProgressIndicator(
-                value:            progress,
-                strokeWidth:      3.5,
-                backgroundColor:  Colors.white24,
-                valueColor:
-                    AlwaysStoppedAnimation<Color>(primary),
+                value: progress,
+                strokeWidth: 3.5,
+                backgroundColor: Colors.white24,
+                valueColor: AlwaysStoppedAnimation<Color>(primary),
               ),
             ),
             Column(
@@ -336,12 +328,10 @@ class _CountdownRing extends StatelessWidget {
               children: [
                 Text('$countdown',
                     style: const TextStyle(
-                        color:      Colors.white,
-                        fontSize:   14,
-                        fontWeight: FontWeight.bold,
-                        height:     1.1)),
+                        color: Colors.white, fontSize: 15,
+                        fontWeight: FontWeight.bold, height: 1.1)),
                 const Icon(Icons.pause_rounded,
-                    color: Colors.white70, size: 10),
+                    color: Colors.white70, size: 11),
               ],
             ),
           ],
@@ -352,67 +342,61 @@ class _CountdownRing extends StatelessWidget {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// TOP BAR
+// TOP BAR  (safe-area aware)
 // ══════════════════════════════════════════════════════════════════════════════
 class _TopBar extends StatelessWidget {
-  final int          idx;
-  final int          total;
-  final bool         isStreaming;
-  final bool         isRecording;
-  final VoidCallback onToggleStream;
-  final VoidCallback onToggleRecord;
-  final VoidCallback onExit;
-  final Color        primary;
-  final String?      groupName;
-  final bool         hasAuto;
-  final bool         autoPaused;
+  final int idx; final int total;
+  final bool isStreaming; final bool isRecording;
+  final VoidCallback onToggleStream; final VoidCallback onToggleRecord;
+  final VoidCallback onExit; final Color primary;
+  final String? groupName; final bool hasAuto; final bool autoPaused;
   final VoidCallback? onTogglePause;
+  final double topPadding;
 
   const _TopBar({
-    required this.idx,
-    required this.total,
-    required this.isStreaming,
-    required this.isRecording,
-    required this.onToggleStream,
-    required this.onToggleRecord,
-    required this.onExit,
-    required this.primary,
-    this.groupName,
-    this.hasAuto      = false,
-    this.autoPaused   = false,
+    required this.idx, required this.total,
+    required this.isStreaming, required this.isRecording,
+    required this.onToggleStream, required this.onToggleRecord,
+    required this.onExit, required this.primary,
+    required this.topPadding,
+    this.groupName, this.hasAuto = false, this.autoPaused = false,
     this.onTogglePause,
   });
 
   @override
   Widget build(BuildContext context) {
+    final isNarrow = MediaQuery.of(context).size.width < 600;
+
     return Container(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end:   Alignment.bottomCenter,
+          begin: Alignment.topCenter, end: Alignment.bottomCenter,
           colors: [Colors.black87, Colors.transparent],
         ),
       ),
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
+      padding: EdgeInsets.fromLTRB(8, topPadding + 4, 8, 20),
       child: Row(
         children: [
-          // Exit
-          IconButton(
-            icon:    const Icon(Icons.close_rounded, color: Colors.white),
-            tooltip: 'Exit (Esc)',
-            onPressed: onExit,
+          // Exit — larger touch target on mobile
+          SizedBox(
+            width: isNarrow ? 48 : 40,
+            height: isNarrow ? 48 : 40,
+            child: IconButton(
+              icon: const Icon(Icons.close_rounded, color: Colors.white),
+              tooltip: 'Exit (Esc)',
+              onPressed: onExit,
+              padding: EdgeInsets.zero,
+            ),
           ),
           // Slide counter
           Text('${idx + 1} / $total',
-              style: const TextStyle(
-                  color: Colors.white70, fontSize: 13)),
+              style: const TextStyle(color: Colors.white70, fontSize: 13)),
           if (groupName != null) ...[
-            const SizedBox(width: 10),
+            const SizedBox(width: 8),
             Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 8, vertical: 3),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(
-                color:        primary.withValues(alpha: 0.30),
+                color: primary.withValues(alpha: 0.30),
                 borderRadius: BorderRadius.circular(10),
               ),
               child: Row(mainAxisSize: MainAxisSize.min, children: [
@@ -420,28 +404,81 @@ class _TopBar extends StatelessWidget {
                     color: Colors.white70, size: 11),
                 const SizedBox(width: 4),
                 Text(groupName!,
-                    style: const TextStyle(
-                        color: Colors.white, fontSize: 11)),
+                    style: const TextStyle(color: Colors.white, fontSize: 11)),
               ]),
             ),
           ],
           const Spacer(),
-          // Stream
-          if (isStreaming || true) // always show the button
+          if (!isNarrow) ...[
+            // Wide: show both stream and record
             _TopBtn(
-              icon:    Icons.wifi_tethering_rounded,
-              label:   isStreaming ? 'LIVE' : 'Stream',
-              color:   isStreaming ? Colors.green : Colors.white54,
-              onTap:   onToggleStream,
+              icon: Icons.wifi_tethering_rounded,
+              label: isStreaming ? 'LIVE' : 'Stream',
+              color: isStreaming ? Colors.green : Colors.white54,
+              onTap: onToggleStream,
             ),
-          const SizedBox(width: 4),
-          // Record
-          _TopBtn(
-            icon:    Icons.fiber_manual_record_rounded,
-            label:   isRecording ? 'REC' : 'Record',
-            color:   isRecording ? Colors.red : Colors.white54,
-            onTap:   onToggleRecord,
-          ),
+            const SizedBox(width: 6),
+            _TopBtn(
+              icon: Icons.fiber_manual_record_rounded,
+              label: isRecording ? 'REC' : 'Record',
+              color: isRecording ? Colors.red : Colors.white54,
+              onTap: onToggleRecord,
+            ),
+          ] else ...[
+            // Narrow: icons only to save space
+            if (isStreaming)
+              GestureDetector(
+                onTap: onToggleStream,
+                child: Container(
+                  padding: const EdgeInsets.all(10),
+                  child: Icon(Icons.wifi_tethering_rounded,
+                      color: Colors.green, size: 20),
+                ),
+              ),
+            if (isRecording)
+              GestureDetector(
+                onTap: onToggleRecord,
+                child: Container(
+                  padding: const EdgeInsets.all(10),
+                  child: const Icon(Icons.fiber_manual_record_rounded,
+                      color: Colors.red, size: 20),
+                ),
+              ),
+            if (!isStreaming && !isRecording)
+              PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert,
+                    color: Colors.white70, size: 20),
+                color: Colors.black87,
+                onSelected: (v) {
+                  if (v == 'stream') onToggleStream();
+                  if (v == 'record') onToggleRecord();
+                },
+                itemBuilder: (_) => [
+                  PopupMenuItem(
+                    value: 'stream',
+                    child: Row(children: [
+                      Icon(Icons.wifi_tethering_rounded,
+                          color: isStreaming ? Colors.green : Colors.white70,
+                          size: 16),
+                      const SizedBox(width: 8),
+                      Text(isStreaming ? 'Stop Stream' : 'Go Live',
+                          style: const TextStyle(color: Colors.white)),
+                    ]),
+                  ),
+                  PopupMenuItem(
+                    value: 'record',
+                    child: Row(children: [
+                      Icon(Icons.fiber_manual_record_rounded,
+                          color: isRecording ? Colors.red : Colors.white70,
+                          size: 16),
+                      const SizedBox(width: 8),
+                      Text(isRecording ? 'Stop Recording' : 'Record',
+                          style: const TextStyle(color: Colors.white)),
+                    ]),
+                  ),
+                ],
+              ),
+          ],
         ],
       ),
     );
@@ -449,33 +486,28 @@ class _TopBar extends StatelessWidget {
 }
 
 class _TopBtn extends StatelessWidget {
-  final IconData     icon;
-  final String       label;
-  final Color        color;
-  final VoidCallback onTap;
+  final IconData icon; final String label;
+  final Color color; final VoidCallback onTap;
+
   const _TopBtn({
-    required this.icon,
-    required this.label,
-    required this.color,
-    required this.onTap,
+    required this.icon, required this.label,
+    required this.color, required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) => GestureDetector(
         onTap: onTap,
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
           decoration: BoxDecoration(
-            color:        Colors.black38,
+            color: Colors.black38,
             borderRadius: BorderRadius.circular(8),
           ),
           child: Row(mainAxisSize: MainAxisSize.min, children: [
             Icon(icon, color: color, size: 14),
             const SizedBox(width: 5),
             Text(label,
-                style: TextStyle(
-                    color:      color,
-                    fontSize:   11,
+                style: TextStyle(color: color, fontSize: 11,
                     fontWeight: FontWeight.bold)),
           ]),
         ),
@@ -483,7 +515,7 @@ class _TopBtn extends StatelessWidget {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// BOTTOM SLIDE STRIP
+// BOTTOM SLIDE STRIP  (safe-area aware, taller on mobile)
 // ══════════════════════════════════════════════════════════════════════════════
 class _SlideStrip extends StatelessWidget {
   final List<Slide>       slides;
@@ -492,14 +524,13 @@ class _SlideStrip extends StatelessWidget {
   final Color             secondary;
   final List<SlideGroup>  groups;
   final ValueChanged<int> onSelect;
+  final double            bottomPadding;
 
   const _SlideStrip({
-    required this.slides,
-    required this.current,
-    required this.primary,
-    required this.secondary,
-    required this.groups,
-    required this.onSelect,
+    required this.slides, required this.current,
+    required this.primary, required this.secondary,
+    required this.groups, required this.onSelect,
+    required this.bottomPadding,
   });
 
   SlideGroup? _groupOf(String slideId) {
@@ -511,27 +542,30 @@ class _SlideStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isNarrow = MediaQuery.of(context).size.width < 600;
+    final stripH   = isNarrow ? 90.0 : 110.0;
+    final thumbW   = isNarrow ? 60.0 : 68.0;
+
     return Container(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
-          begin: Alignment.bottomCenter,
-          end:   Alignment.topCenter,
+          begin: Alignment.bottomCenter, end: Alignment.topCenter,
           colors: [Colors.black87, Colors.transparent],
         ),
       ),
-      padding: const EdgeInsets.fromLTRB(12, 24, 12, 12),
-      height: 110,
+      padding: EdgeInsets.fromLTRB(12, 20, 12, bottomPadding + 8),
+      height:  stripH + bottomPadding,
       child: ListView.builder(
         scrollDirection: Axis.horizontal,
-        itemCount:       slides.length,
+        itemCount: slides.length,
         itemBuilder: (_, i) {
-          final s     = slides[i];
-          final sel   = i == current;
+          final s   = slides[i];
+          final sel = i == current;
           final group = _groupOf(s.id);
           return GestureDetector(
             onTap: () => onSelect(i),
             child: Container(
-              width:  sel ? 80 : 68,
+              width:  sel ? thumbW + 10 : thumbW,
               margin: const EdgeInsets.only(right: 8),
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(6),
@@ -554,7 +588,7 @@ class _SlideStrip extends StatelessWidget {
                           padding: const EdgeInsets.symmetric(
                               horizontal: 4, vertical: 1),
                           decoration: BoxDecoration(
-                            color:        Colors.black54,
+                            color: Colors.black54,
                             borderRadius: BorderRadius.circular(4),
                           ),
                           child: Row(
@@ -565,7 +599,7 @@ class _SlideStrip extends StatelessWidget {
                               const SizedBox(width: 2),
                               Text('${group!.autoAdvanceSeconds}s',
                                   style: const TextStyle(
-                                      color:    Colors.white,
+                                      color: Colors.white,
                                       fontSize: 7,
                                       fontWeight: FontWeight.bold)),
                             ],

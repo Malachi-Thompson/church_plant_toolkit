@@ -1,16 +1,17 @@
 // lib/apps/presentation/widgets/presentation_widgets.dart
 //
-// Shared widgets.  SlideContentPreview and SlideThumbnail now honour
-// the full SlideStyle (bg image, gradient, overlay, fonts, text-box …).
+// Shared widgets.  SlideContentPreview and SlideThumbnail honour the full
+// SlideStyle (bg image, gradient, overlay, fonts, text-box …).
+//
+// Key fix: SlideThumbnail no longer accepts a fixed `height`. It renders
+// at a 16:9 aspect ratio so the slide is never cropped or letter-boxed
+// regardless of how wide the parent container is.
 import 'dart:convert' show base64Decode;
 import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import '../models/presentation_models.dart';
-// lib/apps/presentation/widgets/church_logo.dart
-
-
 
 // ══════════════════════════════════════════════════════════════════════════════
 // LIVE BADGE
@@ -127,28 +128,23 @@ class SlideBackgroundPainter extends CustomPainter {
   }
 
   void _crosshatch(Canvas canvas, Size s, Paint p, double gap) {
-    for (double x = 0; x < s.width; x += gap) {
+    for (double x = 0; x < s.width; x += gap)
       canvas.drawLine(Offset(x, 0), Offset(x, s.height), p);
-    }
-    for (double y = 0; y < s.height; y += gap) {
+    for (double y = 0; y < s.height; y += gap)
       canvas.drawLine(Offset(0, y), Offset(s.width, y), p);
-    }
   }
 
   void _diagonal(Canvas canvas, Size s, Paint p, double gap) {
-    for (double i = -s.height; i < s.width + s.height; i += gap) {
+    for (double i = -s.height; i < s.width + s.height; i += gap)
       canvas.drawLine(Offset(i, 0), Offset(i + s.height, s.height), p);
-    }
   }
 
   void _dots(Canvas canvas, Size s, Color c) {
     final p = Paint()..color = c;
     const gap = 20.0;
-    for (double x = 0; x < s.width; x += gap) {
-      for (double y = 0; y < s.height; y += gap) {
+    for (double x = 0; x < s.width; x += gap)
+      for (double y = 0; y < s.height; y += gap)
         canvas.drawCircle(Offset(x, y), 1.2, p);
-      }
-    }
   }
 
   void _vignette(Canvas canvas, Size s, Color c) {
@@ -156,8 +152,7 @@ class SlideBackgroundPainter extends CustomPainter {
       ..shader = RadialGradient(
         colors: [Colors.transparent, c.withValues(alpha: c.a)],
         stops:  const [0.45, 1.0],
-      ).createShader(
-          Rect.fromLTWH(0, 0, s.width, s.height));
+      ).createShader(Rect.fromLTWH(0, 0, s.width, s.height));
     canvas.drawRect(Offset.zero & s, paint);
   }
 
@@ -177,11 +172,14 @@ class SlideBackgroundPainter extends CustomPainter {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// FULL SLIDE RENDERER  (used by preview, present view, thumbnail)
+// FULL SLIDE RENDERER
 // ══════════════════════════════════════════════════════════════════════════════
-
 /// Renders a complete slide including bg colour/image/gradient, tint, overlay,
 /// text box, and styled text. Pass [fontScale] < 1 for thumbnail use.
+///
+/// Important: this widget expands to fill whatever space is given to it.
+/// Always wrap in a sized/constrained parent (AspectRatio, SizedBox, etc.)
+/// so it has a definite size — never place it directly in an unbounded context.
 class SlideRenderer extends StatelessWidget {
   final Slide  slide;
   final double fontScale;
@@ -190,7 +188,7 @@ class SlideRenderer extends StatelessWidget {
   const SlideRenderer({
     super.key,
     required this.slide,
-    this.fontScale    = 1.0,
+    this.fontScale     = 1.0,
     this.showReference = true,
   });
 
@@ -203,29 +201,26 @@ class SlideRenderer extends StatelessWidget {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          // ── 1. background (colour / gradient painted) ──────────────────
+          // 1. background (colour / gradient painted)
           CustomPaint(
             painter: SlideBackgroundPainter(
                 style: s, bgColor: slide.bgColor),
           ),
 
-          // ── 2. background image ────────────────────────────────────────
+          // 2. background image
           if (s.bgImagePath != null && s.bgImagePath!.isNotEmpty)
             Opacity(
               opacity: s.bgImageOpacity.clamp(0.0, 1.0),
-              child: _BgImage(
-                path:   s.bgImagePath!,
-                fit:    _boxFit(s.bgFit),
-              ),
+              child: _BgImage(path: s.bgImagePath!, fit: _boxFit(s.bgFit)),
             ),
 
-          // ── 3. bg tint ─────────────────────────────────────────────────
+          // 3. bg tint
           if (s.bgTintOpacity > 0)
             Container(
                 color: s.bgTint.withValues(
                     alpha: s.bgTintOpacity.clamp(0.0, 1.0))),
 
-          // ── 4. text content ────────────────────────────────────────────
+          // 4. text content
           Center(
             child: Padding(
               padding: const EdgeInsets.symmetric(
@@ -268,18 +263,16 @@ class _BgImage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // data URI (web / image picker)
     if (path.startsWith('data:')) {
       final comma = path.indexOf(',');
       if (comma >= 0) {
         try {
           final bytes = base64Decode(path.substring(comma + 1));
-          return Image.memory(bytes, fit: fit, width: double.infinity,
-              height: double.infinity);
+          return Image.memory(bytes, fit: fit,
+              width: double.infinity, height: double.infinity);
         } catch (_) {}
       }
     }
-    // file path
     if (!kIsWeb) {
       try {
         return Image.file(File(path), fit: fit,
@@ -341,7 +334,7 @@ class _TextContent extends StatelessWidget {
     return _wrap(
       s,
       Column(
-        mainAxisSize:     MainAxisSize.min,
+        mainAxisSize:       MainAxisSize.min,
         crossAxisAlignment: _crossAlign(s.textAlign),
         children: [
           if (slide.title.isNotEmpty)
@@ -349,14 +342,14 @@ class _TextContent extends StatelessWidget {
               slide.title,
               textAlign: textAlign,
               style: TextStyle(
-                color:          tc,
-                fontSize:       slide.fontSize * s.titleScale * fontScale,
-                fontWeight:     s.titleBold   ? FontWeight.bold   : FontWeight.normal,
-                fontStyle:      s.titleItalic ? FontStyle.italic  : FontStyle.normal,
-                fontFamily:     ff == 'sans-serif' || ff == 'serif' ? null : ff,
-                letterSpacing:  ls,
-                height:         lh,
-                shadows:        shadows,
+                color:         tc,
+                fontSize:      slide.fontSize * s.titleScale * fontScale,
+                fontWeight:    s.titleBold   ? FontWeight.bold   : FontWeight.normal,
+                fontStyle:     s.titleItalic ? FontStyle.italic  : FontStyle.normal,
+                fontFamily:    ff == 'sans-serif' || ff == 'serif' ? null : ff,
+                letterSpacing: ls,
+                height:        lh,
+                shadows:       shadows,
               ),
             ),
           if (slide.body.isNotEmpty) ...[
@@ -382,12 +375,12 @@ class _TextContent extends StatelessWidget {
               slide.reference,
               textAlign: textAlign,
               style: TextStyle(
-                color:        tc.withValues(alpha: 0.65),
-                fontSize:     slide.fontSize * 0.40 * fontScale,
-                fontStyle:    FontStyle.italic,
-                fontFamily:   ff == 'sans-serif' || ff == 'serif' ? null : ff,
+                color:         tc.withValues(alpha: 0.65),
+                fontSize:      slide.fontSize * 0.40 * fontScale,
+                fontStyle:     FontStyle.italic,
+                fontFamily:    ff == 'sans-serif' || ff == 'serif' ? null : ff,
                 letterSpacing: ls,
-                shadows:      shadows,
+                shadows:       shadows,
               ),
             ),
           ],
@@ -406,13 +399,17 @@ class _TextContent extends StatelessWidget {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// SLIDE THUMBNAIL  (small card in the slide list panel)
+// SLIDE THUMBNAIL
 // ══════════════════════════════════════════════════════════════════════════════
+/// Small 16:9 preview card used in the slide list panel and strip.
+///
+/// Previously accepted a fixed `height` which caused the rendered slide to be
+/// cropped at arbitrary aspect ratios. Now it always renders at 16:9 so the
+/// full slide is visible regardless of how wide the container is.
 class SlideThumbnail extends StatelessWidget {
   final Slide slide;
   final bool  selected;
   final Color selectedBorderColor;
-  final double height;
   final VoidCallback? onTap;
 
   const SlideThumbnail({
@@ -420,29 +417,47 @@ class SlideThumbnail extends StatelessWidget {
     required this.slide,
     required this.selectedBorderColor,
     this.selected = false,
-    this.height   = 70,
     this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
+    final borderWidth = selected ? 2.5 : 1.5;
+    final borderColor = selected
+        ? selectedBorderColor
+        : Colors.grey.withValues(alpha: 0.25);
+
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        height: height,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: selected ? selectedBorderColor : Colors.transparent,
-            width: 2.5,
-          ),
+          border: Border.all(color: borderColor, width: borderWidth),
+          // Subtle shadow so the card lifts off the panel background
+          boxShadow: selected
+              ? [
+                  BoxShadow(
+                      color:      selectedBorderColor.withValues(alpha: 0.25),
+                      blurRadius: 6,
+                      spreadRadius: 1)
+                ]
+              : [
+                  BoxShadow(
+                      color:      Colors.black.withValues(alpha: 0.08),
+                      blurRadius: 4)
+                ],
         ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(6),
-          child: SlideRenderer(
-            slide:         slide,
-            fontScale:     0.18,
-            showReference: false,
+        // AspectRatio enforces 16:9 — the renderer fills this exactly,
+        // so nothing is ever cropped.
+        child: AspectRatio(
+          aspectRatio: 16 / 9,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(6.5),
+            child: SlideRenderer(
+              slide:         slide,
+              fontScale:     0.18,
+              showReference: false,
+            ),
           ),
         ),
       ),
@@ -451,7 +466,7 @@ class SlideThumbnail extends StatelessWidget {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// SLIDE CONTENT PREVIEW  (legacy alias — kept for present_view.dart compat)
+// SLIDE CONTENT PREVIEW  (alias — kept for present_view.dart compat)
 // ══════════════════════════════════════════════════════════════════════════════
 class SlideContentPreview extends StatelessWidget {
   final Slide  slide;

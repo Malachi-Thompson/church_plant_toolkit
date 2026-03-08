@@ -1,13 +1,8 @@
 // lib/apps/presentation/presentation_screen.dart
 //
-// This screen is now STATELESS with respect to presentation data.
-// All deck/slide/save state lives in PresentationState (a ChangeNotifier
-// provided above the navigator), so it survives every navigation hop.
-//
-// The screen only owns:
-//   • UI-only timers (none needed now)
-//   • Dialogs / snackbars
-
+// Responsive shell:
+//   • Wide (≥ 600 px)  — original AppBar + two-column editor
+//   • Narrow (< 600 px) — compact AppBar, overflow menu, adaptive dialogs
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -15,7 +10,7 @@ import '../../models/app_state.dart';
 import '../../models/church_profile.dart';
 import '../../theme.dart';
 
-import 'models/presentation_models.dart';       // ← Deck, StreamSettings, etc.
+import 'models/presentation_models.dart';
 import 'models/presentation_state.dart';
 import 'dialogs/stream_setup_dialog.dart';
 import 'dialogs/record_setup_dialog.dart';
@@ -29,7 +24,7 @@ import 'views/present_view.dart';
 class PresentationScreen extends StatelessWidget {
   const PresentationScreen({super.key});
 
-  // ── Dialogs / actions that need a BuildContext ─────────────────────────────
+  // ── Dialogs ──────────────────────────────────────────────────────────────
 
   Future<void> _promptCreateDeck(
       BuildContext context, PresentationState ps) async {
@@ -39,18 +34,15 @@ class PresentationScreen extends StatelessWidget {
       builder: (dctx) => AlertDialog(
         title: const Text('Name your presentation'),
         content: TextField(
-          controller:         ctrl,
-          autofocus:          true,
+          controller: ctrl, autofocus: true,
           decoration: const InputDecoration(
-            labelText: 'Presentation name',
-            border:    OutlineInputBorder(),
-          ),
+              labelText: 'Presentation name',
+              border:    OutlineInputBorder()),
           textCapitalization: TextCapitalization.words,
           onSubmitted: (v) => Navigator.pop(dctx, v.trim()),
         ),
         actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(dctx),
+          TextButton(onPressed: () => Navigator.pop(dctx),
               child: const Text('Skip')),
           ElevatedButton(
               onPressed: () => Navigator.pop(dctx, ctrl.text.trim()),
@@ -78,8 +70,7 @@ class PresentationScreen extends StatelessWidget {
         title:   const Text('Delete Presentation?'),
         content: Text('Delete "${deck.name}"? This cannot be undone.'),
         actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
+          TextButton(onPressed: () => Navigator.pop(ctx, false),
               child: const Text('Cancel')),
           ElevatedButton(
               onPressed: () => Navigator.pop(ctx, true),
@@ -95,11 +86,8 @@ class PresentationScreen extends StatelessWidget {
   Future<void> _showProperties(
       BuildContext context, PresentationState ps, Deck deck) async {
     final state   = context.read<AppState>();
-    final updated = await showDeckPropertiesDialog(
-      context,
-      deck:    deck,
-      primary: state.brandPrimary,
-    );
+    final updated = await showDeckPropertiesDialog(context,
+        deck: deck, primary: state.brandPrimary);
     if (updated == null || !context.mounted) return;
     await ps.updateDeckProperties(updated);
     if (context.mounted) {
@@ -117,11 +105,8 @@ class PresentationScreen extends StatelessWidget {
       BuildContext context, PresentationState ps) async {
     if (ps.openDeck == null) return;
     final state = context.read<AppState>();
-    final slide = await showVersePickerDialog(
-      context,
-      primary:   state.brandPrimary,
-      secondary: state.brandSecondary,
-    );
+    final slide = await showVersePickerDialog(context,
+        primary: state.brandPrimary, secondary: state.brandSecondary);
     if (slide != null && context.mounted) {
       ps.openDeck!.slides.add(slide);
       ps.selectSlide(slide);
@@ -225,8 +210,7 @@ class PresentationScreen extends StatelessWidget {
       builder: (dctx) => AlertDialog(
         title: const Text('Rename presentation'),
         content: TextField(
-          controller: ctrl,
-          autofocus:  true,
+          controller: ctrl, autofocus: true,
           decoration: const InputDecoration(
               labelText: 'Name', border: OutlineInputBorder()),
           onSubmitted: (v) => Navigator.pop(dctx, v.trim()),
@@ -246,7 +230,7 @@ class PresentationScreen extends StatelessWidget {
     }
   }
 
-  // ── Build ──────────────────────────────────────────────────────────────────
+  // ── Build ─────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -254,8 +238,8 @@ class PresentationScreen extends StatelessWidget {
     final primary   = state.brandPrimary;
     final secondary = state.brandSecondary;
     final profile   = state.churchProfile;
-
-    final ps = context.watch<PresentationState>();
+    final ps        = context.watch<PresentationState>();
+    final isWide    = MediaQuery.of(context).size.width >= 600;
 
     // ── Loading splash ───────────────────────────────────────────────────────
     if (ps.loading) {
@@ -294,6 +278,150 @@ class PresentationScreen extends StatelessWidget {
       );
     }
 
+    // ── Build AppBar actions ─────────────────────────────────────────────────
+    final List<Widget> actions = [];
+
+    if (ps.openDeck != null) {
+      // Save indicator always visible
+      actions.add(_SaveIndicator(
+        status:    ps.saveStatus,
+        lastSaved: ps.lastSaved,
+        primary:   primary,
+        onSave:    ps.saveStatus == SaveStatus.unsaved ? ps.flushSave : null,
+      ));
+
+      if (isWide) {
+        // Wide: show individual buttons
+        actions.add(IconButton(
+          icon:    const Icon(Icons.info_outline_rounded),
+          tooltip: 'Presentation Properties',
+          color:   contrastOn(primary).withValues(alpha: 0.80),
+          onPressed: () => _showProperties(context, ps, ps.openDeck!),
+        ));
+        if (ps.isRecording)
+          actions.add(Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: LiveBadge(label: 'REC', color: Colors.red)));
+        if (ps.isStreaming)
+          actions.add(Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: LiveBadge(label: 'LIVE', color: Colors.green)));
+        actions.add(TextButton.icon(
+          onPressed: () => ps.setPresenting(true),
+          icon:  Icon(Icons.slideshow, color: contrastOn(primary)),
+          label: Text('Present', style: TextStyle(color: contrastOn(primary))),
+        ));
+      } else {
+        // Narrow: compact present button + overflow menu
+        if (ps.isRecording)
+          actions.add(LiveBadge(label: 'REC', color: Colors.red));
+        if (ps.isStreaming)
+          actions.add(LiveBadge(label: 'LIVE', color: Colors.green));
+        actions.add(IconButton(
+          icon:    Icon(Icons.slideshow, color: contrastOn(primary)),
+          tooltip: 'Present',
+          onPressed: () => ps.setPresenting(true),
+        ));
+        actions.add(PopupMenuButton<String>(
+          icon: Icon(Icons.more_vert, color: contrastOn(primary)),
+          onSelected: (v) {
+            switch (v) {
+              case 'properties':
+                _showProperties(context, ps, ps.openDeck!);
+                break;
+              case 'stream':
+                _handleToggleStream(context, ps);
+                break;
+              case 'record':
+                _handleToggleRecord(context, ps);
+                break;
+            }
+          },
+          itemBuilder: (_) => [
+            PopupMenuItem(
+              value: 'properties',
+              child: ListTile(
+                leading: const Icon(Icons.info_outline_rounded),
+                title: const Text('Properties'),
+                dense: true, contentPadding: EdgeInsets.zero,
+              ),
+            ),
+            PopupMenuItem(
+              value: 'stream',
+              child: ListTile(
+                leading: Icon(Icons.wifi_tethering_rounded,
+                    color: ps.isStreaming ? Colors.green : null),
+                title: Text(ps.isStreaming ? 'Stop Stream' : 'Go Live'),
+                dense: true, contentPadding: EdgeInsets.zero,
+              ),
+            ),
+            PopupMenuItem(
+              value: 'record',
+              child: ListTile(
+                leading: Icon(Icons.fiber_manual_record,
+                    color: ps.isRecording ? Colors.red : null),
+                title: Text(ps.isRecording ? 'Stop Recording' : 'Record'),
+                dense: true, contentPadding: EdgeInsets.zero,
+              ),
+            ),
+          ],
+        ));
+      }
+    }
+
+    if (ps.openDeck == null) {
+      actions.add(IconButton(
+        icon:    const Icon(Icons.add),
+        tooltip: 'New Presentation',
+        onPressed: () => _promptCreateDeck(context, ps),
+      ));
+    }
+
+    // ── Title widget ─────────────────────────────────────────────────────────
+    Widget titleWidget;
+    if (ps.openDeck != null) {
+      titleWidget = GestureDetector(
+        onTap: () => _promptRenameDeckInline(context, ps),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (profile != null && isWide) ...[
+              ChurchLogo(
+                logoPath: profile.logoPath,
+                primary: primary, secondary: secondary,
+                size: 30, borderRadius: 7,
+              ),
+              const SizedBox(width: 8),
+            ],
+            Flexible(
+              child: Text(ps.openDeck!.name,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                  overflow: TextOverflow.ellipsis),
+            ),
+            const SizedBox(width: 4),
+            Icon(Icons.edit_rounded, size: 13,
+                color: contrastOn(primary).withValues(alpha: 0.55)),
+          ],
+        ),
+      );
+    } else {
+      titleWidget = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (profile != null) ...[
+            ChurchLogo(
+              logoPath: profile.logoPath,
+              primary: primary, secondary: secondary,
+              size: 30, borderRadius: 7,
+            ),
+            const SizedBox(width: 8),
+          ],
+          const Text('Presentation Studio',
+              style: TextStyle(fontWeight: FontWeight.bold)),
+        ],
+      );
+    }
+
     // ── Main scaffold ────────────────────────────────────────────────────────
     return Scaffold(
       appBar: AppBar(
@@ -304,86 +432,13 @@ class PresentationScreen extends StatelessWidget {
                 icon:    const Icon(Icons.arrow_back),
                 tooltip: 'All Presentations',
                 onPressed: () async {
-                  if (ps.saveStatus != SaveStatus.saved) {
-                    await ps.flushSave();
-                  }
+                  if (ps.saveStatus != SaveStatus.saved) await ps.flushSave();
                   ps.closeOpenDeck();
                 },
               )
             : null,
-        title: Row(
-          children: [
-            if (profile != null) ...[
-              ChurchLogo(
-                logoPath:     profile.logoPath,
-                primary:      primary,
-                secondary:    secondary,
-                size:         32,
-                borderRadius: 8,
-              ),
-              const SizedBox(width: 10),
-            ],
-            if (ps.openDeck != null)
-              Flexible(
-                child: GestureDetector(
-                  onTap: () => _promptRenameDeckInline(context, ps),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Flexible(
-                        child: Text(ps.openDeck!.name,
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                            overflow: TextOverflow.ellipsis),
-                      ),
-                      const SizedBox(width: 6),
-                      Icon(Icons.edit_rounded,
-                          size: 15,
-                          color: contrastOn(primary).withValues(alpha: 0.55)),
-                    ],
-                  ),
-                ),
-              )
-            else
-              const Text('Presentation Studio',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-          ],
-        ),
-        actions: [
-          if (ps.openDeck != null)
-            _SaveIndicator(
-              status:    ps.saveStatus,
-              lastSaved: ps.lastSaved,
-              primary:   primary,
-              onSave:    ps.saveStatus == SaveStatus.unsaved
-                  ? ps.flushSave : null,
-            ),
-          if (ps.openDeck != null)
-            IconButton(
-              icon:    const Icon(Icons.info_outline_rounded),
-              tooltip: 'Presentation Properties',
-              color:   contrastOn(primary).withValues(alpha: 0.80),
-              onPressed: () => _showProperties(context, ps, ps.openDeck!),
-            ),
-          if (ps.isRecording)
-            Padding(padding: const EdgeInsets.symmetric(horizontal: 4),
-                child: LiveBadge(label: 'REC', color: Colors.red)),
-          if (ps.isStreaming)
-            Padding(padding: const EdgeInsets.symmetric(horizontal: 4),
-                child: LiveBadge(label: 'LIVE', color: Colors.green)),
-          if (ps.openDeck != null)
-            TextButton.icon(
-              onPressed: () => ps.setPresenting(true),
-              icon:  Icon(Icons.slideshow, color: contrastOn(primary)),
-              label: Text('Present',
-                  style: TextStyle(color: contrastOn(primary))),
-            ),
-          if (ps.openDeck == null)
-            IconButton(
-              icon:    const Icon(Icons.add),
-              tooltip: 'New Presentation',
-              onPressed: () => _promptCreateDeck(context, ps),
-            ),
-        ],
+        title: titleWidget,
+        actions: actions,
       ),
       body: ps.openDeck == null
           ? PresentationsHome(
@@ -423,7 +478,9 @@ class PresentationScreen extends StatelessWidget {
   }
 }
 
-// ── Save indicator widget ──────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+// SAVE INDICATOR
+// ══════════════════════════════════════════════════════════════════════════════
 class _SaveIndicator extends StatelessWidget {
   final SaveStatus    status;
   final DateTime?     lastSaved;
@@ -431,10 +488,8 @@ class _SaveIndicator extends StatelessWidget {
   final VoidCallback? onSave;
 
   const _SaveIndicator({
-    required this.status,
-    required this.primary,
-    required this.lastSaved,
-    this.onSave,
+    required this.status, required this.primary,
+    required this.lastSaved, this.onSave,
   });
 
   @override
@@ -442,12 +497,14 @@ class _SaveIndicator extends StatelessWidget {
     final fg        = contrastOn(primary);
     final isUnsaved = status == SaveStatus.unsaved;
     final isSaving  = status == SaveStatus.saving;
+    final isNarrow  = MediaQuery.of(context).size.width < 600;
 
     final label = switch (status) {
       SaveStatus.saved   => 'Saved',
       SaveStatus.saving  => 'Saving…',
-      SaveStatus.unsaved => 'Unsaved',
+      SaveStatus.unsaved => isNarrow ? '' : 'Unsaved',
     };
+
     final iconColor = switch (status) {
       SaveStatus.saved   => Colors.greenAccent.shade400,
       SaveStatus.saving  => Colors.white70,
@@ -466,12 +523,13 @@ class _SaveIndicator extends StatelessWidget {
         borderRadius: BorderRadius.circular(8),
         onTap: onSave,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               if (isSaving)
-                SizedBox(width: 14, height: 14,
+                SizedBox(
+                    width: 14, height: 14,
                     child: CircularProgressIndicator(
                         strokeWidth: 2,
                         color: fg.withValues(alpha: 0.70)))
@@ -484,30 +542,16 @@ class _SaveIndicator extends StatelessWidget {
                   },
                   size: 16, color: iconColor,
                 ),
-              const SizedBox(width: 5),
-              Text(label,
-                  style: TextStyle(
-                      fontSize:   11,
-                      color:      isUnsaved
-                          ? Colors.orangeAccent
-                          : fg.withValues(alpha: 0.80),
-                      fontWeight: isUnsaved
-                          ? FontWeight.bold : FontWeight.normal)),
-              if (isUnsaved) ...[
-                const SizedBox(width: 6),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                  decoration: BoxDecoration(
-                    color:        Colors.orangeAccent.withValues(alpha: 0.20),
-                    borderRadius: BorderRadius.circular(5),
-                    border:       Border.all(
-                        color: Colors.orangeAccent.withValues(alpha: 0.55)),
-                  ),
-                  child: const Text('Save now',
-                      style: TextStyle(
-                          fontSize: 9, color: Colors.orangeAccent,
-                          fontWeight: FontWeight.bold)),
-                ),
+              if (label.isNotEmpty) ...[
+                const SizedBox(width: 4),
+                Text(label,
+                    style: TextStyle(
+                        fontSize: 11,
+                        color: isUnsaved
+                            ? Colors.orangeAccent
+                            : fg.withValues(alpha: 0.80),
+                        fontWeight: isUnsaved
+                            ? FontWeight.bold : FontWeight.normal)),
               ],
             ],
           ),
@@ -519,8 +563,8 @@ class _SaveIndicator extends StatelessWidget {
   static String _timeAgo(DateTime dt) {
     final diff = DateTime.now().difference(dt);
     if (diff.inSeconds < 60) return 'just now';
-    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
-    if (diff.inHours   < 24) return '${diff.inHours}h ago';
+    if (diff.inMinutes  < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours    < 24) return '${diff.inHours}h ago';
     return '${diff.inDays}d ago';
   }
 }
