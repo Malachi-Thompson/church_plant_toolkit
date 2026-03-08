@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../models/presentation_models.dart';
 import '../widgets/presentation_widgets.dart';
+import '../dialogs/master_style_dialog.dart' show buildPresets, StylePreset;
 import '../../../theme.dart';
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -170,6 +171,7 @@ class _SlideEditorViewState extends State<SlideEditorView>
     _EffectsTab(
       slide: widget.slide,
       primary: widget.primary,
+      secondary: widget.secondary,
       onChanged: _notify,
       onStyle: _updateStyle,
     ),
@@ -796,12 +798,12 @@ class _TextStyleTab extends StatelessWidget {
 // TAB 4 — EFFECTS
 // ══════════════════════════════════════════════════════════════════════════════
 class _EffectsTab extends StatelessWidget {
-  final Slide slide; final Color primary;
+  final Slide slide; final Color primary; final Color secondary;
   final VoidCallback onChanged;
   final void Function(SlideStyle Function(SlideStyle)) onStyle;
 
   const _EffectsTab({
-    required this.slide, required this.primary,
+    required this.slide, required this.primary, required this.secondary,
     required this.onChanged, required this.onStyle,
   });
 
@@ -815,6 +817,21 @@ class _EffectsTab extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+
+          // ── Style Preset Picker ────────────────────────────────────────────
+          _SectionLabel('Quick Style Presets'),
+          const SizedBox(height: 8),
+          _StylePresetPicker(
+            primary:   primary,
+            secondary: secondary,
+            slide:     slide,
+            onStyle:   onStyle,
+            onChanged: onChanged,
+          ),
+          const SizedBox(height: 16),
+          const Divider(),
+          const SizedBox(height: 12),
+
           _SwitchRow(label: 'Text Shadow', value: s.textShadow, color: p,
               onChanged: (v) =>
                   onStyle((st) => st.copyWith(textShadow: v))),
@@ -912,6 +929,84 @@ class _EffectsTab extends StatelessWidget {
       case SlideOverlay.vignette:   return 'Vignette';
       case SlideOverlay.grain:      return 'Grain';
     }
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// STYLE PRESET PICKER
+// ══════════════════════════════════════════════════════════════════════════════
+/// Horizontal chip row letting the user snap the current slide to a preset.
+/// Chips show the preset swatch + name; tapping applies the preset's [SlideStyle].
+class _StylePresetPicker extends StatelessWidget {
+  final Color  primary;
+  final Color  secondary;
+  final Slide  slide;
+  final void Function(SlideStyle Function(SlideStyle)) onStyle;
+  final VoidCallback onChanged;
+
+  const _StylePresetPicker({
+    required this.primary,
+    required this.secondary,
+    required this.slide,
+    required this.onStyle,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final presets = buildPresets(
+        primaryAccent: primary, secondaryAccent: secondary);
+
+    return SizedBox(
+      height: 52,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: presets.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (_, i) {
+          final preset = presets[i];
+          return GestureDetector(
+            onTap: () {
+              // Apply preset style then notify
+              onStyle((_) => preset.style);
+              onChanged();
+            },
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: preset.swatch.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(
+                    color: preset.swatch.withValues(alpha: 0.40)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 16, height: 16,
+                    decoration: BoxDecoration(
+                      color: preset.swatch,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(preset.icon, color: Colors.white, size: 10),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(preset.name,
+                      style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: preset.swatch
+                              .withValues(alpha: 1.0)
+                              .computeLuminance() > 0.5
+                              ? Colors.black87
+                              : preset.swatch)),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 }
 

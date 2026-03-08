@@ -31,6 +31,7 @@ class _SlideGroupDialogState extends State<_SlideGroupDialog> {
   late TextEditingController _nameCtrl;
   late TextEditingController _secsCtrl;
   bool _autoEnabled = false;
+  bool _loopEnabled = false;
 
   @override
   void initState() {
@@ -38,6 +39,7 @@ class _SlideGroupDialogState extends State<_SlideGroupDialog> {
     final e = widget.existing;
     _nameCtrl    = TextEditingController(text: e?.name ?? '');
     _autoEnabled = e?.hasAutoAdvance ?? false;
+    _loopEnabled = e?.loop ?? false;
     _secsCtrl    = TextEditingController(
         text: (e?.autoAdvanceSeconds ?? 5).toString());
   }
@@ -60,13 +62,15 @@ class _SlideGroupDialogState extends State<_SlideGroupDialog> {
 
     final group = widget.existing != null
         ? widget.existing!.copyWith(
-            name:                 name,
-            autoAdvanceSeconds:   secs,
-            clearAuto:            !_autoEnabled,
+            name:               name,
+            autoAdvanceSeconds: secs,
+            clearAuto:          !_autoEnabled,
+            loop:               _loopEnabled,
           )
         : SlideGroup(
             name:               name,
             autoAdvanceSeconds: secs,
+            loop:               _loopEnabled,
           );
 
     Navigator.pop(context, group);
@@ -122,7 +126,7 @@ class _SlideGroupDialogState extends State<_SlideGroupDialog> {
                 textCapitalization: TextCapitalization.words,
                 onSubmitted:   (_) => _submit(),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 16),
 
               // ── Auto-advance toggle ─────────────────────────────────────
               Container(
@@ -183,6 +187,51 @@ class _SlideGroupDialogState extends State<_SlideGroupDialog> {
                               fontSize: 12,
                               color:    Colors.grey.shade500)),
                     ],
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 12),
+
+              // ── Loop toggle ─────────────────────────────────────────────
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color:        _loopEnabled
+                      ? p.withValues(alpha: 0.06) : Colors.grey.shade50,
+                  borderRadius: BorderRadius.circular(10),
+                  border:       Border.all(
+                      color: _loopEnabled
+                          ? p.withValues(alpha: 0.25) : Colors.grey.shade200),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.loop_rounded,
+                        color: _loopEnabled ? p : Colors.grey, size: 20),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Loop group',
+                              style: TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  color: _loopEnabled ? p : null)),
+                          Text(
+                            'After the last slide, loop back to the first '
+                            'instead of advancing out of the group.',
+                            style: TextStyle(
+                                fontSize: 11,
+                                color:    Colors.grey.shade500),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Switch(
+                      value:       _loopEnabled,
+                      activeColor: p,
+                      onChanged:   (v) => setState(() => _loopEnabled = v),
+                    ),
                   ],
                 ),
               ),

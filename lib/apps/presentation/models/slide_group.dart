@@ -1,7 +1,8 @@
 // lib/apps/presentation/models/slide_group.dart
 //
 // A SlideGroup is a named, ordered subset of slides within a Deck that can
-// optionally auto-advance on a timer during presentation.
+// optionally auto-advance on a timer during presentation, and optionally
+// loop back to the first slide instead of exiting the group.
 //
 // Groups are stored directly on the Deck (deck.groups) and reference slides
 // by their id so that standard slide editing remains unchanged.
@@ -13,6 +14,9 @@ class SlideGroup {
   String        name;
   /// Seconds between auto-advances. null = manual only.
   int?          autoAdvanceSeconds;
+  /// When true, reaching the last slide loops back to the first instead of
+  /// advancing out of the group.
+  bool          loop;
   /// Ordered list of slide IDs belonging to this group.
   List<String>  slideIds;
 
@@ -20,6 +24,7 @@ class SlideGroup {
     String?      id,
     required this.name,
     this.autoAdvanceSeconds,
+    this.loop     = false,
     List<String>? slideIds,
   })  : id       = id       ?? const Uuid().v4(),
         slideIds = slideIds ?? [];
@@ -30,13 +35,15 @@ class SlideGroup {
     String?       name,
     int?          autoAdvanceSeconds,
     bool          clearAuto = false,
+    bool?         loop,
     List<String>? slideIds,
   }) =>
       SlideGroup(
-        id:                   id,
-        name:                 name                ?? this.name,
-        autoAdvanceSeconds:   clearAuto ? null    : (autoAdvanceSeconds ?? this.autoAdvanceSeconds),
-        slideIds:             slideIds            ?? List.of(this.slideIds),
+        id:                 id,
+        name:               name               ?? this.name,
+        autoAdvanceSeconds: clearAuto ? null   : (autoAdvanceSeconds ?? this.autoAdvanceSeconds),
+        loop:               loop               ?? this.loop,
+        slideIds:           slideIds           ?? List.of(this.slideIds),
       );
 
   // ── JSON ──────────────────────────────────────────────────────────────────
@@ -45,6 +52,7 @@ class SlideGroup {
         'id':                 id,
         'name':               name,
         'autoAdvanceSeconds': autoAdvanceSeconds,
+        'loop':               loop,
         'slideIds':           slideIds,
       };
 
@@ -52,6 +60,7 @@ class SlideGroup {
         id:                 (j['id']   as String?)  ?? const Uuid().v4(),
         name:               (j['name'] as String?)  ?? 'Group',
         autoAdvanceSeconds: (j['autoAdvanceSeconds'] as num?)?.toInt(),
+        loop:               (j['loop'] as bool?)    ?? false,
         slideIds: (j['slideIds'] as List?)
                 ?.whereType<String>()
                 .toList() ??
@@ -60,5 +69,5 @@ class SlideGroup {
 
   @override
   String toString() => 'SlideGroup($name, ${slideIds.length} slides, '
-      'auto=${autoAdvanceSeconds ?? "off"}s)';
+      'auto=${autoAdvanceSeconds ?? "off"}s, loop=$loop)';
 }
