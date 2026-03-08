@@ -29,7 +29,7 @@ import 'presentation_models.dart';
 // Schema constants
 // ─────────────────────────────────────────────────────────────────────────────
 const _kDbName    = 'presentation_studio.db';
-const _kDbVersion = 2;
+const _kDbVersion = 3;
 const _tDecks     = 'decks';
 const _tSlides    = 'slides';
 const _tSettings  = 'app_settings';
@@ -80,9 +80,31 @@ class PresentationDatabase {
   Future<void> _onUpgrade(Database db, int oldV, int newV) async {
     dev.log('[PresentationDatabase] Upgrading $oldV → $newV');
 
-    if (oldV == 1 && newV == 2) {
+    if (oldV == 1 && newV >= 2) {
       await _migrateV1ToV2(db);
     }
+    if (oldV <= 2 && newV >= 3) {
+      await _migrateV2ToV3(db);
+    }
+  }
+
+  Future<void> _migrateV2ToV3(Database db) async {
+    dev.log('[PresentationDatabase] v2→v3: adding master style columns');
+    final cols = {
+      'master_style_id':     "TEXT NOT NULL DEFAULT 'your_brand'",
+      'master_bg_color':     'INTEGER NOT NULL DEFAULT 0',
+      'master_accent_color': 'INTEGER NOT NULL DEFAULT 0',
+      'master_text_color':   'INTEGER NOT NULL DEFAULT 0',
+    };
+    for (final entry in cols.entries) {
+      try {
+        await db.execute(
+          'ALTER TABLE $_tDecks ADD COLUMN ${entry.key} ${entry.value}');
+      } catch (e) {
+        dev.log('[PresentationDatabase] v2→v3 note (${entry.key}): $e');
+      }
+    }
+    dev.log('[PresentationDatabase] v2→v3 done');
   }
 
   // ── Schema builders ────────────────────────────────────────────────────────
@@ -102,6 +124,10 @@ class PresentationDatabase {
         is_pinned        INTEGER NOT NULL DEFAULT 0,
         sort_order       INTEGER NOT NULL DEFAULT 0,
         groups_json      TEXT NOT NULL DEFAULT '[]',
+        master_style_id      TEXT NOT NULL DEFAULT 'your_brand',
+        master_bg_color      INTEGER NOT NULL DEFAULT 0,
+        master_accent_color  INTEGER NOT NULL DEFAULT 0,
+        master_text_color    INTEGER NOT NULL DEFAULT 0,
         created_at       TEXT NOT NULL,
         last_used_at     TEXT,
         last_modified_at TEXT

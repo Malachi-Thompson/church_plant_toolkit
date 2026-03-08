@@ -819,7 +819,7 @@ class _EffectsTab extends StatelessWidget {
         children: [
 
           // ── Style Preset Picker ────────────────────────────────────────────
-          _SectionLabel('Quick Style Presets'),
+          _SectionLabel('Style Looks'),
           const SizedBox(height: 8),
           _StylePresetPicker(
             primary:   primary,
@@ -937,6 +937,249 @@ class _EffectsTab extends StatelessWidget {
 // ══════════════════════════════════════════════════════════════════════════════
 /// Horizontal chip row letting the user snap the current slide to a preset.
 /// Chips show the preset swatch + name; tapping applies the preset's [SlideStyle].
+// Per-slide-type style choices — 3 curated looks shown as visual cards
+class _SlideStyleChoice {
+  final String     label;
+  final String     subtitle;
+  final Color      swatch;
+  final Color      swatchEnd;
+  final bool       useGradient;
+  final bool       hasTextBox;
+  final SlideStyle style;
+
+  const _SlideStyleChoice({
+    required this.label,
+    required this.subtitle,
+    required this.swatch,
+    required this.swatchEnd,
+    this.useGradient = true,
+    this.hasTextBox  = false,
+    required this.style,
+  });
+}
+
+Map<String, List<_SlideStyleChoice>> _slideStyleChoices(
+    Color primary, Color secondary) {
+  return {
+    'title': [
+      _SlideStyleChoice(
+        label: 'Bold Impact', subtitle: 'Full gradient • large type',
+        swatch: primary, swatchEnd: Color.lerp(primary, Colors.black, 0.55)!,
+        style: SlideStyle(
+          useGradient: true, gradientEnd: Color.lerp(primary, Colors.black, 0.55)!,
+          gradientBegin: Alignment.topLeft, gradientEndAlign: Alignment.bottomRight,
+          overlay: SlideOverlay.vignette, overlayColor: Colors.black, overlayOpacity: 0.35,
+          fontFamily: 'sans-serif', textAlign: SlideTextAlign.center,
+          titleBold: true, titleScale: 1.15, bodyScale: 1.0,
+          letterSpacing: 2.0, lineHeight: 1.35,
+          textShadow: true, shadowColor: Colors.black, shadowBlur: 14,
+          showTextBox: false,
+        ),
+      ),
+      _SlideStyleChoice(
+        label: 'Clean White', subtitle: 'Light bg • dark text',
+        swatch: const Color(0xFFF8F8FA),
+        swatchEnd: const Color(0xFFDDDDE8),
+        style: SlideStyle(
+          useGradient: true, gradientEnd: const Color(0xFFDDDDE8),
+          gradientBegin: Alignment.topCenter, gradientEndAlign: Alignment.bottomCenter,
+          overlay: SlideOverlay.none,
+          fontFamily: 'sans-serif', textAlign: SlideTextAlign.center,
+          titleBold: true, titleScale: 1.1, bodyScale: 0.95,
+          letterSpacing: 0.8, lineHeight: 1.4,
+          textShadow: false, showTextBox: false,
+        ),
+      ),
+      _SlideStyleChoice(
+        label: 'Pill Accent', subtitle: 'Dark bg • branded box',
+        swatch: const Color(0xFF0A0A12),
+        swatchEnd: const Color(0xFF0A0A12),
+        useGradient: false, hasTextBox: true,
+        style: SlideStyle(
+          useGradient: false,
+          overlay: SlideOverlay.dots, overlayColor: Colors.white, overlayOpacity: 0.03,
+          fontFamily: 'sans-serif', textAlign: SlideTextAlign.center,
+          titleBold: true, titleScale: 1.1, bodyScale: 1.0,
+          letterSpacing: 1.8, lineHeight: 1.35, textShadow: false,
+          showTextBox: true,
+          textBoxColor: primary, textBoxOpacity: 0.88,
+          textBoxRadius: 28, textBoxPaddingH: 30, textBoxPaddingV: 16,
+        ),
+      ),
+    ],
+    'lyric': [
+      _SlideStyleChoice(
+        label: 'Worship Dark', subtitle: 'Deep navy • glow shadow',
+        swatch: const Color(0xFF0D1B3E), swatchEnd: const Color(0xFF000511),
+        style: SlideStyle(
+          useGradient: true, gradientEnd: const Color(0xFF000511),
+          gradientBegin: Alignment.topLeft, gradientEndAlign: Alignment.bottomRight,
+          overlay: SlideOverlay.vignette, overlayColor: Colors.black, overlayOpacity: 0.50,
+          fontFamily: 'serif', textAlign: SlideTextAlign.center,
+          titleBold: false, titleItalic: true, titleScale: 0.85,
+          bodyItalic: false, bodyScale: 1.1,
+          letterSpacing: 0.8, lineHeight: 1.6,
+          textShadow: true, shadowColor: const Color(0xFF3A6FD8), shadowBlur: 16,
+          showTextBox: false,
+        ),
+      ),
+      _SlideStyleChoice(
+        label: 'Warm Praise', subtitle: 'Amber gradient • bold',
+        swatch: const Color(0xFFD4770A), swatchEnd: const Color(0xFF7B1A1A),
+        style: SlideStyle(
+          useGradient: true, gradientEnd: const Color(0xFF7B1A1A),
+          gradientBegin: Alignment.topRight, gradientEndAlign: Alignment.bottomLeft,
+          overlay: SlideOverlay.grain, overlayColor: Colors.white, overlayOpacity: 0.05,
+          fontFamily: 'sans-serif', textAlign: SlideTextAlign.center,
+          titleBold: true, titleScale: 1.0, bodyScale: 1.05,
+          letterSpacing: 1.2, lineHeight: 1.5,
+          textShadow: true, shadowColor: const Color(0xFF3D0000), shadowBlur: 10,
+          showTextBox: false,
+        ),
+      ),
+      _SlideStyleChoice(
+        label: 'Frosted Box', subtitle: 'Black bg • frosted pill',
+        swatch: const Color(0xFF111111), swatchEnd: const Color(0xFF111111),
+        useGradient: false, hasTextBox: true,
+        style: SlideStyle(
+          useGradient: false,
+          overlay: SlideOverlay.none,
+          fontFamily: 'sans-serif', textAlign: SlideTextAlign.center,
+          titleBold: true, titleScale: 0.95, bodyScale: 1.0,
+          letterSpacing: 0.5, lineHeight: 1.55, textShadow: false,
+          showTextBox: true,
+          textBoxColor: Colors.white, textBoxOpacity: 0.12,
+          textBoxRadius: 16, textBoxPaddingH: 28, textBoxPaddingV: 18,
+        ),
+      ),
+    ],
+    'scripture': [
+      _SlideStyleChoice(
+        label: 'Ocean Deep', subtitle: 'Navy vignette • italic serif',
+        swatch: const Color(0xFF006994), swatchEnd: const Color(0xFF001A33),
+        style: SlideStyle(
+          useGradient: true, gradientEnd: const Color(0xFF001A33),
+          gradientBegin: Alignment.topCenter, gradientEndAlign: Alignment.bottomCenter,
+          overlay: SlideOverlay.vignette, overlayColor: Colors.black, overlayOpacity: 0.45,
+          fontFamily: 'serif', textAlign: SlideTextAlign.center,
+          titleBold: false, titleItalic: true, titleScale: 0.85,
+          bodyItalic: true, bodyScale: 1.05,
+          letterSpacing: 0.3, lineHeight: 1.65,
+          textShadow: true, shadowColor: Colors.black, shadowBlur: 12,
+          showTextBox: false,
+        ),
+      ),
+      _SlideStyleChoice(
+        label: 'Stone Chapel', subtitle: 'Warm grey • classic serif',
+        swatch: const Color(0xFF5A5045), swatchEnd: const Color(0xFF2A2018),
+        style: SlideStyle(
+          useGradient: true, gradientEnd: const Color(0xFF2A2018),
+          gradientBegin: Alignment.topCenter, gradientEndAlign: Alignment.bottomCenter,
+          overlay: SlideOverlay.crosshatch, overlayColor: Colors.white, overlayOpacity: 0.03,
+          fontFamily: 'serif', textAlign: SlideTextAlign.center,
+          titleBold: false, titleItalic: true, titleScale: 0.85,
+          bodyItalic: true, bodyScale: 1.0,
+          letterSpacing: 0.5, lineHeight: 1.65,
+          textShadow: true, shadowColor: Colors.black, shadowBlur: 8,
+          showTextBox: false,
+        ),
+      ),
+      _SlideStyleChoice(
+        label: 'White Card', subtitle: 'Light bg • reference box',
+        swatch: const Color(0xFFF2F2F5), swatchEnd: const Color(0xFFE0E0EC),
+        hasTextBox: true,
+        style: SlideStyle(
+          useGradient: true, gradientEnd: const Color(0xFFE0E0EC),
+          gradientBegin: Alignment.topCenter, gradientEndAlign: Alignment.bottomCenter,
+          overlay: SlideOverlay.none,
+          fontFamily: 'serif', textAlign: SlideTextAlign.center,
+          titleBold: false, titleItalic: true, titleScale: 0.85,
+          bodyItalic: true, bodyScale: 1.0,
+          letterSpacing: 0.3, lineHeight: 1.6, textShadow: false,
+          showTextBox: true,
+          textBoxColor: const Color(0xFF1A1A2E), textBoxOpacity: 0.08,
+          textBoxRadius: 12, textBoxPaddingH: 28, textBoxPaddingV: 18,
+        ),
+      ),
+    ],
+    'announcement': [
+      _SlideStyleChoice(
+        label: 'High Contrast', subtitle: 'Dark bg • left-aligned box',
+        swatch: const Color(0xFF0D0D0D), swatchEnd: const Color(0xFF0D0D0D),
+        useGradient: false, hasTextBox: true,
+        style: SlideStyle(
+          useGradient: false,
+          overlay: SlideOverlay.dots, overlayColor: Colors.white, overlayOpacity: 0.04,
+          fontFamily: 'sans-serif', textAlign: SlideTextAlign.left,
+          titleBold: true, titleScale: 1.1, bodyScale: 1.0,
+          letterSpacing: 0.5, lineHeight: 1.4, textShadow: false,
+          showTextBox: true,
+          textBoxColor: Colors.black, textBoxOpacity: 0.70,
+          textBoxRadius: 4, textBoxPaddingH: 28, textBoxPaddingV: 20,
+        ),
+      ),
+      _SlideStyleChoice(
+        label: 'Fire & Energy', subtitle: 'Orange burst • bold',
+        swatch: const Color(0xFFE63900), swatchEnd: const Color(0xFF7A0000),
+        style: SlideStyle(
+          useGradient: true, gradientEnd: const Color(0xFF7A0000),
+          gradientBegin: Alignment.topCenter, gradientEndAlign: Alignment.bottomCenter,
+          overlay: SlideOverlay.grain, overlayColor: Colors.white, overlayOpacity: 0.04,
+          fontFamily: 'sans-serif', textAlign: SlideTextAlign.center,
+          titleBold: true, titleScale: 1.15, bodyScale: 1.05,
+          letterSpacing: 2.0, lineHeight: 1.3,
+          textShadow: true, shadowColor: const Color(0xFF7A0000), shadowBlur: 16,
+          showTextBox: false,
+        ),
+      ),
+      _SlideStyleChoice(
+        label: 'Brand Pill', subtitle: 'Primary colour • rounded box',
+        swatch: const Color(0xFF111827), swatchEnd: const Color(0xFF111827),
+        useGradient: false, hasTextBox: true,
+        style: SlideStyle(
+          useGradient: false,
+          overlay: SlideOverlay.none,
+          fontFamily: 'sans-serif', textAlign: SlideTextAlign.center,
+          titleBold: true, titleScale: 1.1, bodyScale: 1.0,
+          letterSpacing: 1.5, lineHeight: 1.4, textShadow: false,
+          showTextBox: true,
+          textBoxColor: primary, textBoxOpacity: 0.85,
+          textBoxRadius: 30, textBoxPaddingH: 30, textBoxPaddingV: 16,
+        ),
+      ),
+    ],
+    'blank': [
+      _SlideStyleChoice(
+        label: 'Pure Black', subtitle: 'Solid black • no text',
+        swatch: Colors.black, swatchEnd: Colors.black, useGradient: false,
+        style: SlideStyle(useGradient: false, overlay: SlideOverlay.none,
+            showTextBox: false),
+      ),
+      _SlideStyleChoice(
+        label: 'Deep Navy', subtitle: 'Navy gradient',
+        swatch: const Color(0xFF0D1B3E), swatchEnd: const Color(0xFF000511),
+        style: SlideStyle(
+          useGradient: true, gradientEnd: const Color(0xFF000511),
+          gradientBegin: Alignment.topLeft, gradientEndAlign: Alignment.bottomRight,
+          overlay: SlideOverlay.vignette, overlayColor: Colors.black, overlayOpacity: 0.40,
+          showTextBox: false,
+        ),
+      ),
+      _SlideStyleChoice(
+        label: 'Brand Dark', subtitle: 'Primary colour fade',
+        swatch: primary, swatchEnd: Color.lerp(primary, Colors.black, 0.60)!,
+        style: SlideStyle(
+          useGradient: true,
+          gradientEnd: Color.lerp(primary, Colors.black, 0.60)!,
+          gradientBegin: Alignment.topLeft, gradientEndAlign: Alignment.bottomRight,
+          overlay: SlideOverlay.vignette, overlayColor: Colors.black, overlayOpacity: 0.30,
+          showTextBox: false,
+        ),
+      ),
+    ],
+  };
+}
+
 class _StylePresetPicker extends StatelessWidget {
   final Color  primary;
   final Color  secondary;
@@ -954,60 +1197,141 @@ class _StylePresetPicker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final presets = buildPresets(
-        primaryAccent: primary, secondaryAccent: secondary);
+    final choices = _slideStyleChoices(primary, secondary);
+    final options = choices[slide.type] ?? choices['title']!;
 
-    return SizedBox(
-      height: 52,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: presets.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
-        itemBuilder: (_, i) {
-          final preset = presets[i];
-          return GestureDetector(
-            onTap: () {
-              // Apply preset style then notify
-              onStyle((_) => preset.style);
-              onChanged();
-            },
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: preset.swatch.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(
-                    color: preset.swatch.withValues(alpha: 0.40)),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 16, height: 16,
-                    decoration: BoxDecoration(
-                      color: preset.swatch,
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(preset.icon, color: Colors.white, size: 10),
+    return Row(
+      children: options.map((choice) {
+        return Expanded(
+          child: Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: _StyleChoiceCard(
+              choice:    choice,
+              primary:   primary,
+              onTap: () {
+                onStyle((_) => choice.style);
+                onChanged();
+              },
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+}
+
+class _StyleChoiceCard extends StatelessWidget {
+  final _SlideStyleChoice choice;
+  final Color             primary;
+  final VoidCallback      onTap;
+
+  const _StyleChoiceCard({
+    required this.choice, required this.primary, required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Column(
+        children: [
+          // ── Mini preview ──────────────────────────────────────────────
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: AspectRatio(
+              aspectRatio: 16 / 9,
+              child: CustomPaint(
+                painter: _ChoicePainter(choice: choice),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 6, vertical: 5),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      _CBar(w: 0.80, h: 6, color:
+                          Colors.white.withValues(alpha: 0.90)),
+                      const SizedBox(height: 4),
+                      _CBar(w: 0.65, h: 6, color:
+                          Colors.white.withValues(alpha: 0.90)),
+                      const SizedBox(height: 5),
+                      _CBar(w: 0.55, h: 3.5, color:
+                          Colors.white.withValues(alpha: 0.50)),
+                      const SizedBox(height: 3),
+                      _CBar(w: 0.45, h: 3.5, color:
+                          Colors.white.withValues(alpha: 0.50)),
+                    ],
                   ),
-                  const SizedBox(width: 6),
-                  Text(preset.name,
-                      style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: preset.swatch
-                              .withValues(alpha: 1.0)
-                              .computeLuminance() > 0.5
-                              ? Colors.black87
-                              : preset.swatch)),
-                ],
+                ),
               ),
             ),
-          );
-        },
+          ),
+          const SizedBox(height: 5),
+          // ── Label ─────────────────────────────────────────────────────
+          Text(choice.label,
+              style: const TextStyle(
+                  fontSize: 11, fontWeight: FontWeight.w600),
+              maxLines: 1, overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center),
+          Text(choice.subtitle,
+              style: TextStyle(
+                  fontSize: 9.5, color: Colors.grey.shade500),
+              maxLines: 1, overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center),
+        ],
       ),
     );
   }
+}
+
+class _CBar extends StatelessWidget {
+  final double w, h;
+  final Color  color;
+  const _CBar({required this.w, required this.h, required this.color});
+
+  @override
+  Widget build(BuildContext context) => FractionallySizedBox(
+        widthFactor: w,
+        child: Container(
+          height: h,
+          decoration: BoxDecoration(
+              color: color, borderRadius: BorderRadius.circular(2)),
+        ),
+      );
+}
+
+class _ChoicePainter extends CustomPainter {
+  final _SlideStyleChoice choice;
+  const _ChoicePainter({required this.choice});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (choice.useGradient) {
+      canvas.drawRect(
+        Offset.zero & size,
+        Paint()
+          ..shader = LinearGradient(
+            begin: Alignment.topLeft, end: Alignment.bottomRight,
+            colors: [choice.swatch, choice.swatchEnd],
+          ).createShader(Offset.zero & size),
+      );
+    } else {
+      canvas.drawRect(Offset.zero & size, Paint()..color = choice.swatch);
+    }
+    // subtle vignette on all previews for depth
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()
+        ..shader = RadialGradient(
+          colors: [Colors.transparent,
+              Colors.black.withValues(alpha: 0.35)],
+          stops: const [0.45, 1.0],
+        ).createShader(Rect.fromLTWH(0, 0, size.width, size.height)),
+    );
+  }
+
+  @override
+  bool shouldRepaint(_ChoicePainter old) =>
+      old.choice.label != choice.label;
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

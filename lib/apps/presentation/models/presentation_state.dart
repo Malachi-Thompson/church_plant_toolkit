@@ -285,6 +285,18 @@ class PresentationState extends ChangeNotifier with WidgetsBindingObserver {
     markDirty();
   }
 
+  /// Move a slide by one step up (delta = -1) or down (delta = +1).
+  /// Unlike [reorderSlides] this does NOT apply the ReorderableListView
+  /// index correction — use this for plain arrow-button moves.
+  void moveSlide(int idx, int delta) {
+    if (openDeck == null) return;
+    final target = idx + delta;
+    if (target < 0 || target >= openDeck!.slides.length) return;
+    final slide = openDeck!.slides.removeAt(idx);
+    openDeck!.slides.insert(target, slide);
+    markDirty();
+  }
+
   void selectSlide(Slide? slide) {
     selectedSlide = slide;
     notifyListeners();

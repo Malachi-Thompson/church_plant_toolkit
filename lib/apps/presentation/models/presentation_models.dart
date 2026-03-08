@@ -407,6 +407,10 @@ class Deck {
   DateTime?        lastUsedAt;
   DateTime?        lastModifiedAt;
   String?          filePath;
+  String           masterStyleId;   // layout template id (e.g. 'midnight_worship')
+  int              masterBgColor;   // ARGB stored as int; 0 = use brand primary
+  int              masterAccentColor; // 0 = use brand secondary
+  int              masterTextColor;   // 0 = use default (white)
 
   Deck({
     required this.id,
@@ -424,6 +428,10 @@ class Deck {
     this.lastUsedAt,
     this.lastModifiedAt,
     this.filePath,
+    this.masterStyleId      = 'your_brand',
+    this.masterBgColor      = 0,
+    this.masterAccentColor  = 0,
+    this.masterTextColor    = 0,
     List<SlideGroup>? groups,
   })  : tags   = tags   ?? [],
         groups = groups ?? [];
@@ -447,6 +455,10 @@ class Deck {
         'is_pinned':        isPinned    ? 1 : 0,
         'sort_order':       sortOrder,
         'groups_json':      jsonEncode(groups.map((g) => g.toJson()).toList()),
+        'master_style_id':    masterStyleId,
+        'master_bg_color':    masterBgColor,
+        'master_accent_color': masterAccentColor,
+        'master_text_color':  masterTextColor,
         'created_at':       createdAt.toIso8601String(),
         'last_used_at':     lastUsedAt?.toIso8601String(),
         'last_modified_at': lastModifiedAt?.toIso8601String(),
@@ -504,6 +516,10 @@ class Deck {
       createdAt:      dt('created_at')    ?? DateTime.now(),
       lastUsedAt:     dt('last_used_at'),
       lastModifiedAt: dt('last_modified_at'),
+      masterStyleId:     (row['master_style_id']    as String?) ?? 'your_brand',
+      masterBgColor:     ((row['master_bg_color']    as num?) ?? 0).toInt(),
+      masterAccentColor: ((row['master_accent_color'] as num?) ?? 0).toInt(),
+      masterTextColor:   ((row['master_text_color']  as num?) ?? 0).toInt(),
       slides:         [], // populated by DB after this call
     );
   }

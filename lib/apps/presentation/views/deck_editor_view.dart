@@ -435,7 +435,10 @@ class _SlideListPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final items      = SongCollectionStore.buildDisplayList(deck);
     final groups     = deck.groups;
-    final groupedIds = groups.expand((g) => g.slideIds).toSet();
+
+    // Build a flat list in true deck order.
+    // Each entry is one of: group-header, collection-header, or a slide row.
+    final listItems = _buildFlatList(items, groups);
 
     return Column(
       children: [
@@ -492,88 +495,119 @@ class _SlideListPanel extends StatelessWidget {
                 )
               : ListView.builder(
                   padding: const EdgeInsets.only(bottom: 20),
-                  itemCount: _listItemCount(items, groups, groupedIds),
-                  itemBuilder: (_, i) =>
-                      _buildListItem(i, items, groups, groupedIds),
+                  itemCount: listItems.length,
+                  itemBuilder: (_, i) => listItems[i],
                 ),
         ),
       ],
     );
   }
 
-  int _listItemCount(List items, List<SlideGroup> groups, Set<String> groupedIds) {
-    int count = groups.length;
-    for (final item in items) {
-      if (item.isCollection) {
-        count++;
-      } else {
-        final slide = deck.slides[item.deckIndex];
-        if (!groupedIds.contains(slide.id)) count++;
+  /// Builds a flat ordered list of widgets that mirrors the true deck order.
+  ///
+  /// For each deck position we emit:
+  ///   • A group-header widget the first time we encounter a slide that
+  ///     belongs to a group (the header is NOT a separate item — it is
+  ///     rendered inside the first grouped-slide row via [_GroupedSlideTile]).
+  ///   • A collection-header the first time a collection slide appears.
+  ///   • A normal ungrouped-slide tile otherwise.
+  ///
+  /// Groups with NO slides in the deck are appended at the end so they're
+  /// still visible/editable even when empty.
+  List<Widget> _buildFlatList(List items, List<SlideGroup> groups) {
+    final result       = <Widget>[];
+    final seenGroups   = <String>{};
+    final seenColls    = <String>{};
+
+    // Map slideId → group for quick lookup
+    final slideToGroup = <String, SlideGroup>{};
+    for (final g in groups) {
+      for (final id in g.slideIds) {
+        slideToGroup[id] = g;
       }
     }
-    return count;
-  }
 
-  Widget _buildListItem(int listIdx, List items,
-      List<SlideGroup> groups, Set<String> groupedIds) {
-    if (listIdx < groups.length) {
-      return _GroupTile(
-        key: ValueKey('group_${groups[listIdx].id}'),
-        group: groups[listIdx], deck: deck,
-        primary: primary, secondary: secondary,
-        selectedSlide: selectedSlide,
-        onSelectSlide: onSelectSlide,
-        onUpdateGroup: onUpdateGroup,
-        onDeleteGroup: onDeleteGroup,
-        onRemoveFromGroup: onRemoveSlideFromGroup,
-        importContext: importContext,
-      );
-    }
-    int cursor = listIdx - groups.length;
     for (final item in items) {
       if (item.isCollection) {
-        if (cursor == 0) {
-          final coll = SongCollectionStore.find(item.collectionId);
-          if (coll == null) return const SizedBox.shrink();
-          return SongCollectionTile(
-            key: ValueKey('coll_${coll.id}'),
-            collection: coll, deck: deck,
+        // Collection header (shown once per collection)
+        if (seenColls.contains(item.collectionId)) continue;
+        seenColls.add(item.collectionId);
+        final coll = SongCollectionStore.find(item.collectionId);
+        if (coll == null) continue;
+        result.add(SongCollectionTile(
+          key: ValueKey('coll_${coll.id}'),
+          collection: coll, deck: deck,
+          primary: primary, secondary: secondary,
+          selectedSlide: selectedSlide,
+          onSelectSlide: onSelectSlide,
+          onToggleExpand: () => onToggleCollection(coll.id),
+          onMoveGroup: (d) => onMoveCollection(coll.id, d),
+          onRemove: () => onRemoveCollection(coll.id),
+          onReorderSlide: (o, n) => onReorderCollectionSlide(coll.id, o, n),
+        ));
+      } else {
+        final deckIdx = item.deckIndex;
+        final slide   = deck.slides[deckIdx];
+        final group   = slideToGroup[slide.id];
+
+        if (group != null) {
+          // First slide of this group → emit the whole group block
+          if (seenGroups.contains(group.id)) continue;
+          seenGroups.add(group.id);
+          result.add(_GroupTile(
+            key: ValueKey('group_${group.id}'),
+            group: group, deck: deck,
             primary: primary, secondary: secondary,
             selectedSlide: selectedSlide,
             onSelectSlide: onSelectSlide,
-            onToggleExpand: () => onToggleCollection(coll.id),
-            onMoveGroup: (d) => onMoveCollection(coll.id, d),
-            onRemove: () => onRemoveCollection(coll.id),
-            onReorderSlide: (o, n) => onReorderCollectionSlide(coll.id, o, n),
-          );
-        }
-        cursor--;
-      } else {
-        final slide = deck.slides[item.deckIndex];
-        if (groupedIds.contains(slide.id)) continue;
-        if (cursor == 0) {
-          return _UngroupedSlideTile(
+            onUpdateGroup: onUpdateGroup,
+            onDeleteGroup: onDeleteGroup,
+            onRemoveFromGroup: onRemoveSlideFromGroup,
+            onReorderSlides: onReorderSlides,
+            importContext: importContext,
+          ));
+        } else {
+          // Plain ungrouped slide
+          result.add(_UngroupedSlideTile(
             key: ValueKey(slide.id),
-            slide: slide, deckIndex: item.deckIndex,
+            slide: slide, deckIndex: deckIdx,
             deckLen: deck.slides.length,
             selected: selectedSlide?.id == slide.id,
             primary: primary, secondary: secondary,
             groups: deck.groups,
             onTap: () => onSelectSlide(slide),
             onDelete: () => onDeleteSlide(slide),
-            onMoveUp: item.deckIndex > 0
-                ? () => onReorderSlides(item.deckIndex, item.deckIndex - 1)
+            onMoveUp: deckIdx > 0
+                ? () => onReorderSlides(deckIdx, deckIdx - 1)
                 : null,
-            onMoveDown: item.deckIndex < deck.slides.length - 1
-                ? () => onReorderSlides(item.deckIndex, item.deckIndex + 2)
+            onMoveDown: deckIdx < deck.slides.length - 1
+                ? () => onReorderSlides(deckIdx, deckIdx + 2)
                 : null,
             onAssignGroup: (gId) => onAddSlideToGroup(gId, slide.id),
-          );
+          ));
         }
-        cursor--;
       }
     }
-    return const SizedBox.shrink();
+
+    // Append any groups whose slides haven't been placed yet (empty groups)
+    for (final g in groups) {
+      if (!seenGroups.contains(g.id)) {
+        result.add(_GroupTile(
+          key: ValueKey('group_${g.id}'),
+          group: g, deck: deck,
+          primary: primary, secondary: secondary,
+          selectedSlide: selectedSlide,
+          onSelectSlide: onSelectSlide,
+          onUpdateGroup: onUpdateGroup,
+          onDeleteGroup: onDeleteGroup,
+          onRemoveFromGroup: onRemoveSlideFromGroup,
+          onReorderSlides: onReorderSlides,
+          importContext: importContext,
+        ));
+      }
+    }
+
+    return result;
   }
 }
 
@@ -588,6 +622,7 @@ class _GroupTile extends StatefulWidget {
   final ValueChanged<SlideGroup> onUpdateGroup;
   final ValueChanged<String> onDeleteGroup;
   final void Function(String, String) onRemoveFromGroup;
+  final void Function(int, int) onReorderSlides;
   final BuildContext importContext;
 
   const _GroupTile({
@@ -596,7 +631,8 @@ class _GroupTile extends StatefulWidget {
     required this.primary, required this.secondary,
     required this.selectedSlide, required this.onSelectSlide,
     required this.onUpdateGroup, required this.onDeleteGroup,
-    required this.onRemoveFromGroup, required this.importContext,
+    required this.onRemoveFromGroup, required this.onReorderSlides,
+    required this.importContext,
   });
 
   @override
@@ -616,6 +652,17 @@ class _GroupTileState extends State<_GroupTile> {
                 id: id, type: 'blank', title: '?', body: '',
                 bgColor: Colors.grey, textColor: Colors.white)))
         .toList();
+
+    // Deck indices for all slides in this group
+    final groupDeckIndices = g.slideIds
+        .map((id) => widget.deck.slides.indexWhere((s) => s.id == id))
+        .where((i) => i >= 0)
+        .toList()
+      ..sort();
+
+    final firstDeckIdx = groupDeckIndices.isEmpty ? -1 : groupDeckIndices.first;
+    final lastDeckIdx  = groupDeckIndices.isEmpty ? -1 : groupDeckIndices.last;
+    final deckLen      = widget.deck.slides.length;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -669,6 +716,30 @@ class _GroupTileState extends State<_GroupTile> {
                                       fontWeight: FontWeight.bold)),
                             ],
                           ),
+                        ),
+                      // Group-level move arrows — shift the whole block by 1
+                      if (firstDeckIdx > 0)
+                        _Arr(
+                          icon: Icons.arrow_upward_rounded,
+                          onTap: () {
+                            // Move each slide up by 1, processing first→last.
+                            // After slide[0] moves from pos N to N-1, slide[1]
+                            // is now at its original index still, so we just
+                            // iterate in ascending order.
+                            for (final idx in groupDeckIndices) {
+                              widget.onReorderSlides(idx, idx - 1);
+                            }
+                          },
+                        ),
+                      if (lastDeckIdx >= 0 && lastDeckIdx < deckLen - 1)
+                        _Arr(
+                          icon: Icons.arrow_downward_rounded,
+                          onTap: () {
+                            // Move each slide down by 1, processing last→first.
+                            for (final idx in groupDeckIndices.reversed) {
+                              widget.onReorderSlides(idx, idx + 2);
+                            }
+                          },
                         ),
                       PopupMenuButton<String>(
                         padding: EdgeInsets.zero,
@@ -725,7 +796,9 @@ class _GroupTileState extends State<_GroupTile> {
         ),
         if (_expanded)
           ...slides.asMap().entries.map((e) {
-            final s = e.value;
+            final idx     = e.key;
+            final s       = e.value;
+            final deckIdx = widget.deck.slides.indexWhere((d) => d.id == s.id);
             return Padding(
               key: ValueKey('gs_${s.id}'),
               padding: const EdgeInsets.only(left: 20),
@@ -740,18 +813,43 @@ class _GroupTileState extends State<_GroupTile> {
                       color: Colors.orange.shade700),
                 ),
                 onDismissed: (_) => widget.onRemoveFromGroup(g.id, s.id),
-                child: Stack(
+                child: Row(
                   children: [
-                    SlideThumbnail(
-                      slide: s,
-                      selected: widget.selectedSlide?.id == s.id,
-                      selectedBorderColor: widget.secondary,
-                      onTap: () => widget.onSelectSlide(s),
+                    Expanded(
+                      child: Stack(
+                        children: [
+                          SlideThumbnail(
+                            slide: s,
+                            selected: widget.selectedSlide?.id == s.id,
+                            selectedBorderColor: widget.secondary,
+                            onTap: () => widget.onSelectSlide(s),
+                          ),
+                          if (g.hasAutoAdvance)
+                            Positioned(
+                              bottom: 4, right: 4,
+                              child: _TimerBadge(secs: g.autoAdvanceSeconds!),
+                            ),
+                        ],
+                      ),
                     ),
-                    if (g.hasAutoAdvance)
-                      Positioned(
-                        bottom: 4, right: 4,
-                        child: _TimerBadge(secs: g.autoAdvanceSeconds!),
+                    // Per-slide move arrows within deck order
+                    if (deckIdx >= 0)
+                      Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (deckIdx > 0)
+                            _Arr(
+                              icon: Icons.arrow_upward_rounded,
+                              onTap: () =>
+                                  widget.onReorderSlides(deckIdx, deckIdx - 1),
+                            ),
+                          if (deckIdx < deckLen - 1)
+                            _Arr(
+                              icon: Icons.arrow_downward_rounded,
+                              onTap: () =>
+                                  widget.onReorderSlides(deckIdx, deckIdx + 2),
+                            ),
+                        ],
                       ),
                   ],
                 ),

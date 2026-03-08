@@ -747,8 +747,9 @@ class _SlideStrip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isNarrow = MediaQuery.of(context).size.width < 600;
-    final thumbW   = isNarrow ? 60.0 : 68.0;
-    final stripH   = isNarrow ? 90.0 : 110.0;
+    final thumbW   = isNarrow ? 80.0 : 96.0;
+    final thumbH   = thumbW * 9 / 16;
+    final stripH   = thumbH + 28.0; // padding above + below thumb
 
     return Container(
       decoration: const BoxDecoration(
@@ -771,7 +772,8 @@ class _SlideStrip extends StatelessWidget {
           return GestureDetector(
             onTap: () => onSelect(i),
             child: Container(
-              width:  sel ? thumbW + 10 : thumbW,
+              width:  sel ? thumbW + 8 : thumbW,
+              height: sel ? thumbH + 4.5 : thumbH,
               margin: const EdgeInsets.only(right: 8),
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(6),
@@ -780,61 +782,67 @@ class _SlideStrip extends StatelessWidget {
                   width: sel ? 2.5 : 1,
                 ),
               ),
-              // AspectRatio keeps thumbnails at 16:9 — no cropping.
-              child: AspectRatio(
-                aspectRatio: 16 / 9,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(5),
-                  child: Stack(
-                    children: [
-                      Positioned.fill(
-                        child: SlideRenderer(slide: s, fontScale: 0.15),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(5),
+                child: Stack(
+                  children: [
+                    // Render slide at a fixed 1600×900 canvas then scale it
+                    // down uniformly to fit the thumbnail box — no clipping,
+                    // no distortion, same approach as the main slide view.
+                    SizedBox.expand(
+                      child: FittedBox(
+                        fit: BoxFit.contain,
+                        alignment: Alignment.center,
+                        child: SizedBox(
+                          width: 1600, height: 900,
+                          child: SlideRenderer(slide: s, fontScale: 1.0),
+                        ),
                       ),
-                      if (group?.hasAutoAdvance == true)
-                        Positioned(
-                          bottom: 2, right: 2,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 4, vertical: 1),
-                            decoration: BoxDecoration(
-                              color: Colors.black54,
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  isLoop
-                                      ? Icons.loop_rounded
-                                      : Icons.timer_rounded,
-                                  color: Colors.white70, size: 8),
-                                const SizedBox(width: 2),
-                                Text('${group!.autoAdvanceSeconds}s',
-                                    style: const TextStyle(
-                                        color: Colors.white, fontSize: 7,
-                                        fontWeight: FontWeight.bold)),
-                              ],
-                            ),
+                    ),
+                    if (group?.hasAutoAdvance == true)
+                      Positioned(
+                        bottom: 2, right: 2,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 4, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: Colors.black54,
+                            borderRadius: BorderRadius.circular(4),
                           ),
-                        ),
-                      if (isLoop && !(group?.hasAutoAdvance ?? false))
-                        Positioned(
-                          bottom: 2, right: 2,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 3, vertical: 1),
-                            decoration: BoxDecoration(
-                              color: Colors.black54,
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: const Icon(Icons.loop_rounded,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                isLoop
+                                    ? Icons.loop_rounded
+                                    : Icons.timer_rounded,
                                 color: Colors.white70, size: 8),
+                              const SizedBox(width: 2),
+                              Text('${group!.autoAdvanceSeconds}s',
+                                  style: const TextStyle(
+                                      color: Colors.white, fontSize: 7,
+                                      fontWeight: FontWeight.bold)),
+                            ],
                           ),
                         ),
+                      ),
+                    if (isLoop && !(group?.hasAutoAdvance ?? false))
+                      Positioned(
+                        bottom: 2, right: 2,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 3, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: Colors.black54,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: const Icon(Icons.loop_rounded,
+                              color: Colors.white70, size: 8),
+                        ),
+                      ),
                     ],
                   ),
                 ),
-              ),
             ),
           );
         },
