@@ -15,6 +15,7 @@ import '../../models/app_state.dart';
 import '../../models/church_profile.dart';
 import '../../theme.dart';
 
+import 'models/presentation_models.dart';       // ← Deck, StreamSettings, etc.
 import 'models/presentation_state.dart';
 import 'dialogs/stream_setup_dialog.dart';
 import 'dialogs/record_setup_dialog.dart';
@@ -249,12 +250,11 @@ class PresentationScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final state   = context.watch<AppState>();
-    final primary = state.brandPrimary;
+    final state     = context.watch<AppState>();
+    final primary   = state.brandPrimary;
     final secondary = state.brandSecondary;
-    final profile = state.churchProfile;
+    final profile   = state.churchProfile;
 
-    // Watch PresentationState — rebuilds whenever notifyListeners() fires
     final ps = context.watch<PresentationState>();
 
     // ── Loading splash ───────────────────────────────────────────────────────
@@ -304,7 +304,6 @@ class PresentationScreen extends StatelessWidget {
                 icon:    const Icon(Icons.arrow_back),
                 tooltip: 'All Presentations',
                 onPressed: () async {
-                  // Flush any pending debounced save before leaving
                   if (ps.saveStatus != SaveStatus.saved) {
                     await ps.flushSave();
                   }

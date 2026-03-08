@@ -2,25 +2,22 @@
 //
 // Unified SQLite persistence for Presentation Studio.
 //
-// "Bad database factory" fix:
-//   sqflite alone only works on Android & iOS.
-//   On Windows, macOS, Linux you must call sqfliteFfiInit() and set
-//   databaseFactory = databaseFactoryFfi BEFORE opening any database.
-//   This file does that automatically so no other file needs changing.
+// IMPORTANT: sqfliteFfiInit() and databaseFactory = databaseFactoryFfi
+// are now called in main() BEFORE runApp(), not here lazily.
+// Calling them lazily inside an async function can silently fail on Windows.
 //
-// pubspec.yaml — add both of these:
+// pubspec.yaml dependencies needed:
 //   sqflite: ^2.3.3
 //   sqflite_common_ffi: ^2.3.3
+//   path_provider: ^2.1.0
+//   path: ^1.9.0
 
 import 'dart:convert';
 import 'dart:developer' as dev;
-import 'dart:io' show Platform;
 
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'presentation_models.dart';
 
@@ -49,26 +46,21 @@ class PresentationDatabase {
   }
 
   Future<Database> _open() async {
-    // sqflite needs the FFI factory on every desktop platform.
-    // Without this you get "Bad database factory" on Windows/macOS/Linux.
-    if (!kIsWeb) {
-      if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
-        sqfliteFfiInit();
-        databaseFactory = databaseFactoryFfi;
-      }
-      // Android + iOS use the default sqflite factory — nothing to change.
-    }
-
+    // sqfliteFfiInit() is now called in main() before runApp() on desktop.
+    // We do NOT call it here to avoid race conditions on Windows.
     final docsDir = await getApplicationDocumentsDirectory();
     final dbPath  = p.join(docsDir.path, _kDbName);
-    dev.log('[PresentationDatabase] Opening DB at $dbPath');
+    dev.log('[PresentationDatabase] Opening DB at: $dbPath');
 
-    return openDatabase(
+    final database = await openDatabase(
       dbPath,
       version:   _kDbVersion,
       onCreate:  _onCreate,
       onUpgrade: _onUpgrade,
     );
+
+    dev.log('[PresentationDatabase] DB opened successfully');
+    return database;
   }
 
   Future<void> _onCreate(Database db, int version) async {
@@ -95,11 +87,12 @@ class PresentationDatabase {
         value TEXT NOT NULL
       )
     ''');
+
+    dev.log('[PresentationDatabase] Schema created');
   }
 
   Future<void> _onUpgrade(Database db, int oldV, int newV) async {
     dev.log('[PresentationDatabase] Upgrade $oldV -> $newV');
-    // Add migration steps here as the schema evolves.
   }
 
   // ── DECKS ──────────────────────────────────────────────────────────────────
@@ -107,29 +100,41 @@ class PresentationDatabase {
   Future<List<Deck>> loadDecks() async {
     final d    = await db;
     final rows = await d.query(_tDecks, orderBy: 'sort_order DESC');
+    dev.log('[PresentationDatabase] Loading ${rows.length} deck rows');
 
     final decks = <Deck>[];
     for (final row in rows) {
       try {
-        final json = jsonDecode(row['deck_json'] as String)
-            as Map<String, dynamic>;
+        final jsonStr = row['deck_json'];
+        if (jsonStr == null || jsonStr is! String || jsonStr.isEmpty) {
+          dev.log('[PresentationDatabase] Skipping row ${row['id']}: empty deck_json');
+          continue;
+        }
+        final json = jsonDecode(jsonStr);
+        if (json is! Map<String, dynamic>) {
+          dev.log('[PresentationDatabase] Skipping row ${row['id']}: deck_json is not a Map');
+          continue;
+        }
         decks.add(Deck.fromJson(json));
-      } catch (e) {
-        dev.log('[PresentationDatabase] Skipping corrupt row '
-            '${row['id']}: $e');
+      } catch (e, st) {
+        // Log the full error so you can see exactly what's failing
+        dev.log('[PresentationDatabase] Skipping corrupt row ${row['id']}: $e\n$st');
       }
     }
+
+    dev.log('[PresentationDatabase] Successfully loaded ${decks.length} decks');
     return decks;
   }
 
   Future<void> saveDeck(Deck deck) async {
-    final d = await db;
+    final d   = await db;
+    final row = _deckToRow(deck);
     await d.insert(
       _tDecks,
-      _deckToRow(deck),
+      row,
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
-    dev.log('[PresentationDatabase] Saved "${deck.name}"');
+    dev.log('[PresentationDatabase] Saved "${deck.name}" (${deck.slides.length} slides)');
   }
 
   Future<void> saveDecks(List<Deck> decks) async {
@@ -161,7 +166,8 @@ class PresentationDatabase {
     try {
       return StreamSettings.fromJson(
           jsonDecode(raw) as Map<String, dynamic>);
-    } catch (_) {
+    } catch (e) {
+      dev.log('[PresentationDatabase] loadStreamSettings error: $e');
       return StreamSettings();
     }
   }
@@ -175,7 +181,8 @@ class PresentationDatabase {
     try {
       return RecordSettings.fromJson(
           jsonDecode(raw) as Map<String, dynamic>);
-    } catch (_) {
+    } catch (e) {
+      dev.log('[PresentationDatabase] loadRecordSettings error: $e');
       return RecordSettings();
     }
   }
@@ -207,24 +214,27 @@ class PresentationDatabase {
 
   // ── ROW BUILDER ────────────────────────────────────────────────────────────
 
-  Map<String, dynamic> _deckToRow(Deck deck) => {
-        'id':               deck.id,
-        'name':             deck.name,
-        'sort_order':       deck.sortOrder,
-        'is_pinned':        deck.isPinned   ? 1 : 0,
-        'is_template':      deck.isTemplate ? 1 : 0,
-        'created_at':       deck.createdAt.toIso8601String(),
-        'last_used_at':     deck.lastUsedAt?.toIso8601String(),
-        'last_modified_at': deck.lastModifiedAt?.toIso8601String(),
-        'service_date':     deck.serviceDate?.toIso8601String(),
-        // Full deck JSON — every SlideStyle field is captured here
-        'deck_json':        jsonEncode(deck.toJson()),
-      };
+  Map<String, dynamic> _deckToRow(Deck deck) {
+    final json = jsonEncode(deck.toJson());
+    return {
+      'id':               deck.id,
+      'name':             deck.name,
+      'sort_order':       deck.sortOrder,
+      'is_pinned':        deck.isPinned   ? 1 : 0,
+      'is_template':      deck.isTemplate ? 1 : 0,
+      'created_at':       deck.createdAt.toIso8601String(),
+      'last_used_at':     deck.lastUsedAt?.toIso8601String(),
+      'last_modified_at': deck.lastModifiedAt?.toIso8601String(),
+      'service_date':     deck.serviceDate?.toIso8601String(),
+      'deck_json':        json,
+    };
+  }
 
   // ── CLOSE ──────────────────────────────────────────────────────────────────
 
   Future<void> close() async {
     await _db?.close();
     _db = null;
+    dev.log('[PresentationDatabase] Closed');
   }
 }

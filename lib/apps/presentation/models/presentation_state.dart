@@ -1,22 +1,4 @@
 // lib/apps/presentation/models/presentation_state.dart
-//
-// PresentationState is a ChangeNotifier that lives at the APP level (not inside
-// PresentationScreen). Because it is provided above the navigator, it survives
-// every navigation — going to the main app and back never destroys it.
-//
-// How to wire it up in main.dart / your app root:
-// ─────────────────────────────────────────────────
-//   ChangeNotifierProvider(
-//     create: (_) => PresentationState()..init(),
-//     child: YourApp(),
-//   )
-//
-// How to use it in PresentationScreen:
-// ─────────────────────────────────────
-//   final ps = context.watch<PresentationState>();
-//   // read:  ps.decks, ps.openDeck, ps.selectedSlide, ps.saveStatus …
-//   // write: ps.openDeckForEditing(deck), ps.markDirty(), ps.flushSave() …
-
 import 'dart:async';
 import 'dart:developer' as dev;
 import 'package:flutter/foundation.dart';
@@ -27,6 +9,7 @@ import 'presentation_service.dart';
 import 'slide_defaults.dart';
 import 'slide_group.dart';
 import '../songselect/songselect_import.dart';
+import '../../../theme.dart';                    // ← contrastOn lives here
 
 enum SaveStatus { saved, saving, unsaved }
 
@@ -55,7 +38,6 @@ class PresentationState extends ChangeNotifier {
 
   // ── Init / dispose ─────────────────────────────────────────────────────────
 
-  /// Call once from your provider's create callback.
   Future<void> init() async {
     await _loadAll();
     _periodic = Timer.periodic(
@@ -68,7 +50,6 @@ class PresentationState extends ChangeNotifier {
   void dispose() {
     _periodic?.cancel();
     _debounce?.cancel();
-    // Best-effort flush on dispose
     if (saveStatus != SaveStatus.saved) {
       if (openDeck != null) _service.saveDeck(openDeck!);
       _service.saveDecks(decks);
@@ -108,7 +89,6 @@ class PresentationState extends ChangeNotifier {
 
   // ── Save ───────────────────────────────────────────────────────────────────
 
-  /// Schedule a debounced save (use for continuous edits like typing).
   void markDirty() {
     saveStatus = SaveStatus.unsaved;
     notifyListeners();
@@ -116,7 +96,6 @@ class PresentationState extends ChangeNotifier {
     _debounce = Timer(const Duration(milliseconds: 800), flushSave);
   }
 
-  /// Immediately persist everything to the DB.
   Future<void> flushSave() async {
     _debounce?.cancel();
     _debounce  = null;
@@ -135,7 +114,7 @@ class PresentationState extends ChangeNotifier {
     } catch (e) {
       saveStatus = SaveStatus.unsaved;
       dev.log('[PresentationState] save error: $e');
-      rethrow; // let the screen show a snackbar
+      rethrow;
     } finally {
       notifyListeners();
     }
@@ -158,7 +137,7 @@ class PresentationState extends ChangeNotifier {
     openDeck      = deck;
     selectedSlide = null;
     notifyListeners();
-    await flushSave(); // immediate — never lose a brand-new deck
+    await flushSave();
     return deck;
   }
 
@@ -220,7 +199,7 @@ class PresentationState extends ChangeNotifier {
     openDeck        = deck;
     selectedSlide   = null;
     notifyListeners();
-    _service.saveDeck(deck); // fire-and-forget for lastUsedAt
+    _service.saveDeck(deck);
   }
 
   void closeOpenDeck() {
@@ -240,7 +219,7 @@ class PresentationState extends ChangeNotifier {
       title:     SlideDefaults.title(type),
       body:      SlideDefaults.body(type),
       bgColor:   bg,
-      textColor: contrastOn(bg),
+      textColor: contrastOn(bg),   // ← now resolved via theme.dart import
     );
     openDeck!.slides.add(slide);
     selectedSlide = slide;

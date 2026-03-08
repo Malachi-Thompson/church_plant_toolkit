@@ -1,23 +1,34 @@
 // lib/main.dart
+import 'dart:io' show Platform;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'models/app_state.dart';
 import 'services/bible_service.dart';
-import'apps/presentation/models/presentation_state.dart';
+import 'apps/presentation/models/presentation_state.dart';
 import 'screens/setup_screen.dart';
 import 'screens/dashboard_screen.dart';
 import 'theme.dart';
 
 void main() {
+  // Must be called synchronously on the main isolate BEFORE runApp.
+  // Lazy init inside an async _open() can silently fail on Windows/macOS/Linux.
+  if (!kIsWeb) {
+    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+      sqfliteFfiInit();
+      databaseFactory = databaseFactoryFfi;
+    }
+  }
+
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AppState()),
         ChangeNotifierProvider(create: (_) => BibleService()),
         ChangeNotifierProvider(create: (_) => PresentationState()..init()),
-        // ... any other providers
       ],
-      child: const MyApp(),
+      child: const ChurchPlantToolkit(),
     ),
   );
 }
@@ -29,8 +40,6 @@ class ChurchPlantToolkit extends StatelessWidget {
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
 
-    // Expose BibleService (owned by AppState) as its own provider so any
-    // widget can read it with context.watch<BibleService>()
     return ChangeNotifierProvider<BibleService>.value(
       value: state.bibleService,
       child: MaterialApp(
