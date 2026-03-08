@@ -3,16 +3,21 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'models/app_state.dart';
 import 'services/bible_service.dart';
+import'apps/presentation/models/presentation_state.dart';
 import 'screens/setup_screen.dart';
 import 'screens/dashboard_screen.dart';
 import 'theme.dart';
 
 void main() {
-  WidgetsFlutterBinding.ensureInitialized();
   runApp(
-    ChangeNotifierProvider(
-      create: (_) => AppState(),
-      child: const ChurchPlantToolkit(),
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => AppState()),
+        ChangeNotifierProvider(create: (_) => BibleService()),
+        ChangeNotifierProvider(create: (_) => PresentationState()..init()),
+        // ... any other providers
+      ],
+      child: const MyApp(),
     ),
   );
 }

@@ -1,4 +1,9 @@
 // lib/apps/presentation/views/presentations_home.dart
+//
+// Changes from original:
+//   • Export (.cpres) option removed from deck card popup menu
+//   • Import toolbar button removed
+//   • onExportDeck / onImportDeck callbacks dropped from widget signature
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/presentation_models.dart';
@@ -14,9 +19,7 @@ class PresentationsHome extends StatefulWidget {
   final ValueChanged<Deck>   onDeleteDeck;
   final ValueChanged<Deck>   onRenameDeck;
   final ValueChanged<Deck>   onDuplicateDeck;
-  final ValueChanged<Deck>   onProperties;   // open Properties dialog
-  final ValueChanged<Deck>   onExportDeck;   // export .cpres file
-  final VoidCallback         onImportDeck;   // import .cpres file
+  final ValueChanged<Deck>   onProperties;
 
   const PresentationsHome({
     super.key,
@@ -29,8 +32,6 @@ class PresentationsHome extends StatefulWidget {
     required this.onRenameDeck,
     required this.onDuplicateDeck,
     required this.onProperties,
-    required this.onExportDeck,
-    required this.onImportDeck,
   });
 
   @override
@@ -59,55 +60,30 @@ class _PresentationsHomeState extends State<PresentationsHome> {
     final filtered = _filtered;
     return Column(
       children: [
-        // ── Search + Import toolbar ───────────────────────────────────────
+        // ── Search toolbar ────────────────────────────────────────────────
         Padding(
           padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-          child: Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _searchCtrl,
-                  onChanged: (v) => setState(() => _query = v),
-                  decoration: InputDecoration(
-                    hintText:  'Search presentations…',
-                    prefixIcon: const Icon(Icons.search),
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12)),
-                    filled:    true,
-                    fillColor: Colors.grey.shade100,
-                    contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 12),
-                    suffixIcon: _query.isNotEmpty
-                        ? IconButton(
-                            icon: const Icon(Icons.clear),
-                            onPressed: () {
-                              _searchCtrl.clear();
-                              setState(() => _query = '');
-                            })
-                        : null,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Tooltip(
-                message: 'Import .cpres file',
-                child: OutlinedButton.icon(
-                  onPressed: widget.onImportDeck,
-                  icon:  Icon(Icons.file_upload_outlined,
-                      color: widget.primary, size: 18),
-                  label: Text('Import',
-                      style: TextStyle(color: widget.primary)),
-                  style: OutlinedButton.styleFrom(
-                    side: BorderSide(
-                        color: widget.primary.withValues(alpha: 0.40)),
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 13),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12)),
-                  ),
-                ),
-              ),
-            ],
+          child: TextField(
+            controller: _searchCtrl,
+            onChanged: (v) => setState(() => _query = v),
+            decoration: InputDecoration(
+              hintText:  'Search presentations…',
+              prefixIcon: const Icon(Icons.search),
+              border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12)),
+              filled:    true,
+              fillColor: Colors.grey.shade100,
+              contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16, vertical: 12),
+              suffixIcon: _query.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear),
+                      onPressed: () {
+                        _searchCtrl.clear();
+                        setState(() => _query = '');
+                      })
+                  : null,
+            ),
           ),
         ),
 
@@ -117,7 +93,6 @@ class _PresentationsHomeState extends State<PresentationsHome> {
                   primary:   widget.primary,
                   secondary: widget.secondary,
                   onNew:     widget.onNewDeck,
-                  onImport:  widget.onImportDeck,
                 )
               : filtered.isEmpty
                   ? Center(
@@ -133,7 +108,6 @@ class _PresentationsHomeState extends State<PresentationsHome> {
                       onRename:     widget.onRenameDeck,
                       onDuplicate:  widget.onDuplicateDeck,
                       onProperties: widget.onProperties,
-                      onExport:     widget.onExportDeck,
                     ),
         ),
       ],
@@ -152,7 +126,6 @@ class _DeckGrid extends StatelessWidget {
   final ValueChanged<Deck> onRename;
   final ValueChanged<Deck> onDuplicate;
   final ValueChanged<Deck> onProperties;
-  final ValueChanged<Deck> onExport;
 
   const _DeckGrid({
     required this.decks,
@@ -164,7 +137,6 @@ class _DeckGrid extends StatelessWidget {
     required this.onRename,
     required this.onDuplicate,
     required this.onProperties,
-    required this.onExport,
   });
 
   @override
@@ -220,7 +192,6 @@ class _DeckGrid extends StatelessWidget {
                 onRename:     () => onRename(decks[i]),
                 onDuplicate:  () => onDuplicate(decks[i]),
                 onProperties: () => onProperties(decks[i]),
-                onExport:     () => onExport(decks[i]),
               ),
               childCount: decks.length,
             ),
@@ -241,7 +212,6 @@ class _DeckCard extends StatelessWidget {
   final VoidCallback onRename;
   final VoidCallback onDuplicate;
   final VoidCallback onProperties;
-  final VoidCallback onExport;
 
   const _DeckCard({
     super.key,
@@ -253,7 +223,6 @@ class _DeckCard extends StatelessWidget {
     required this.onRename,
     required this.onDuplicate,
     required this.onProperties,
-    required this.onExport,
   });
 
   DateTime get lastUsed => deck.lastUsedAt ?? deck.createdAt;
@@ -327,13 +296,10 @@ class _DeckCard extends StatelessWidget {
         onTap: onOpen,
         child: Column(
           children: [
-            // Slide preview
             Expanded(
               flex: 50,
               child: _firstSlidePreview(),
             ),
-
-            // Info area
             Expanded(
               flex: 50,
               child: Padding(
@@ -344,7 +310,6 @@ class _DeckCard extends StatelessWidget {
                     _slideStrip(),
                     const SizedBox(height: 6),
 
-                    // Name row
                     Row(
                       children: [
                         if (deck.isPinned) ...[
@@ -354,7 +319,8 @@ class _DeckCard extends StatelessWidget {
                         ],
                         if (deck.isTemplate) ...[
                           Icon(Icons.content_copy_rounded,
-                              size: 12, color: Colors.deepPurple.shade300),
+                              size: 12,
+                              color: Colors.deepPurple.shade300),
                           const SizedBox(width: 4),
                         ],
                         Expanded(
@@ -374,7 +340,6 @@ class _DeckCard extends StatelessWidget {
                               case 'properties': onProperties(); break;
                               case 'rename':     onRename();     break;
                               case 'duplicate':  onDuplicate();  break;
-                              case 'export':     onExport();     break;
                               case 'delete':     onDelete();     break;
                             }
                           },
@@ -384,7 +349,6 @@ class _DeckCard extends StatelessWidget {
                             const PopupMenuDivider(),
                             _menuItem('rename',    Icons.drive_file_rename_outline, 'Rename'),
                             _menuItem('duplicate', Icons.copy_rounded,              'Duplicate'),
-                            _menuItem('export',    Icons.file_download_outlined,    'Export .cpres'),
                             const PopupMenuDivider(),
                             _menuItem('delete',    Icons.delete_outline,            'Delete',
                                 color: Colors.red),
@@ -393,7 +357,6 @@ class _DeckCard extends StatelessWidget {
                       ],
                     ),
 
-                    // Description if present
                     if (deck.description.isNotEmpty) ...[
                       const SizedBox(height: 2),
                       Text(deck.description,
@@ -406,7 +369,6 @@ class _DeckCard extends StatelessWidget {
 
                     const Spacer(),
 
-                    // Footer row
                     Row(
                       children: [
                         Icon(Icons.layers_outlined,
@@ -414,7 +376,8 @@ class _DeckCard extends StatelessWidget {
                         const SizedBox(width: 3),
                         Text('${deck.slideCount}',
                             style: TextStyle(
-                                fontSize: 11, color: Colors.grey.shade500)),
+                                fontSize: 11,
+                                color:    Colors.grey.shade500)),
                         if (deck.author.isNotEmpty) ...[
                           const SizedBox(width: 8),
                           Icon(Icons.person_outline_rounded,
@@ -434,11 +397,11 @@ class _DeckCard extends StatelessWidget {
                         const SizedBox(width: 3),
                         Text(_formatDate(lastUsed),
                             style: TextStyle(
-                                fontSize: 11, color: Colors.grey.shade500)),
+                                fontSize: 11,
+                                color:    Colors.grey.shade500)),
                       ],
                     ),
 
-                    // Service date badge
                     if (deck.serviceDate != null) ...[
                       const SizedBox(height: 4),
                       Container(
@@ -532,13 +495,11 @@ class _EmptyHome extends StatelessWidget {
   final Color        primary;
   final Color        secondary;
   final VoidCallback onNew;
-  final VoidCallback onImport;
 
   const _EmptyHome({
     required this.primary,
     required this.secondary,
     required this.onNew,
-    required this.onImport,
   });
 
   @override
@@ -555,35 +516,19 @@ class _EmptyHome extends StatelessWidget {
                   fontSize: 22, fontWeight: FontWeight.bold,
                   color: primary.withValues(alpha: 0.60))),
           const SizedBox(height: 8),
-          Text('Create a new deck or import an existing .cpres file.',
-              style: TextStyle(color: Colors.grey.shade500, fontSize: 14)),
+          Text('Create a new deck to get started.',
+              style: TextStyle(
+                  color: Colors.grey.shade500, fontSize: 14)),
           const SizedBox(height: 32),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              FilledButton.icon(
-                onPressed: onNew,
-                icon:  const Icon(Icons.add),
-                label: const Text('New Deck'),
-                style: FilledButton.styleFrom(
-                  backgroundColor: primary,
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 24, vertical: 14),
-                ),
-              ),
-              const SizedBox(width: 12),
-              OutlinedButton.icon(
-                onPressed: onImport,
-                icon:  Icon(Icons.file_upload_outlined, color: primary),
-                label: Text('Import File',
-                    style: TextStyle(color: primary)),
-                style: OutlinedButton.styleFrom(
-                  side: BorderSide(color: primary.withValues(alpha: 0.40)),
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 24, vertical: 14),
-                ),
-              ),
-            ],
+          FilledButton.icon(
+            onPressed: onNew,
+            icon:  const Icon(Icons.add),
+            label: const Text('New Deck'),
+            style: FilledButton.styleFrom(
+              backgroundColor: primary,
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 24, vertical: 14),
+            ),
           ),
           const SizedBox(height: 40),
           Text('Or start from a template:',

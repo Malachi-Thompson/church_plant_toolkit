@@ -1,14 +1,8 @@
 // lib/apps/presentation/dialogs/deck_properties_dialog.dart
 //
-// Full deck metadata editor:
-//   • Title, Description, Author
-//   • Service date picker
-//   • Tags (add / remove chips)
-//   • Private notes
-//   • File info (path, size, created/modified dates)
-//   • Pin / Template toggle
+// Full deck metadata editor — unchanged except the File tab no longer shows
+// a file path or mentions .cpres export (data is stored in the app database).
 
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -38,21 +32,16 @@ class _DeckPropertiesDialogState extends State<_DeckPropertiesDialog>
     with SingleTickerProviderStateMixin {
   late TabController _tabs;
 
-  // ── controllers ────────────────────────────────────────────────────────────
   late TextEditingController _nameCtrl;
   late TextEditingController _descCtrl;
   late TextEditingController _authorCtrl;
   late TextEditingController _notesCtrl;
   late TextEditingController _tagCtrl;
 
-  // ── mutable state ──────────────────────────────────────────────────────────
   late List<String> _tags;
   late bool         _isPinned;
   late bool         _isTemplate;
   DateTime?         _serviceDate;
-
-  // ── file info ──────────────────────────────────────────────────────────────
-  int?   _fileSizeBytes;
 
   @override
   void initState() {
@@ -68,7 +57,6 @@ class _DeckPropertiesDialogState extends State<_DeckPropertiesDialog>
     _isPinned    = d.isPinned;
     _isTemplate  = d.isTemplate;
     _serviceDate = d.serviceDate;
-    _loadFileSize();
   }
 
   @override
@@ -82,15 +70,6 @@ class _DeckPropertiesDialogState extends State<_DeckPropertiesDialog>
     super.dispose();
   }
 
-  Future<void> _loadFileSize() async {
-    if (widget.deck.filePath == null) return;
-    try {
-      final f    = File(widget.deck.filePath!);
-      final stat = await f.stat();
-      if (mounted) setState(() => _fileSizeBytes = stat.size);
-    } catch (_) {}
-  }
-
   void _addTag() {
     final t = _tagCtrl.text.trim();
     if (t.isNotEmpty && !_tags.contains(t)) {
@@ -101,10 +80,10 @@ class _DeckPropertiesDialogState extends State<_DeckPropertiesDialog>
   Future<void> _pickDate() async {
     final now  = DateTime.now();
     final date = await showDatePicker(
-      context:       context,
-      initialDate:   _serviceDate ?? now,
-      firstDate:     DateTime(2000),
-      lastDate:      DateTime(2100),
+      context:     context,
+      initialDate: _serviceDate ?? now,
+      firstDate:   DateTime(2000),
+      lastDate:    DateTime(2100),
       builder: (ctx, child) => Theme(
         data: Theme.of(ctx).copyWith(
           colorScheme: ColorScheme.light(primary: widget.primary),
@@ -119,8 +98,7 @@ class _DeckPropertiesDialogState extends State<_DeckPropertiesDialog>
     final d = widget.deck;
     return Deck(
       id:             d.id,
-      name:           _nameCtrl.text.trim().isEmpty
-                        ? d.name : _nameCtrl.text.trim(),
+      name:           _nameCtrl.text.trim().isEmpty ? d.name : _nameCtrl.text.trim(),
       description:    _descCtrl.text.trim(),
       author:         _authorCtrl.text.trim(),
       notes:          _notesCtrl.text.trim(),
@@ -158,8 +136,7 @@ class _DeckPropertiesDialogState extends State<_DeckPropertiesDialog>
                 borderRadius: const BorderRadius.vertical(
                     top: Radius.circular(16)),
                 border: Border(
-                    bottom: BorderSide(
-                        color: p.withValues(alpha: 0.14))),
+                    bottom: BorderSide(color: p.withValues(alpha: 0.14))),
               ),
               child: Row(
                 children: [
@@ -169,8 +146,7 @@ class _DeckPropertiesDialogState extends State<_DeckPropertiesDialog>
                       color:        p.withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: Icon(Icons.folder_open_rounded,
-                        color: p, size: 20),
+                    child: Icon(Icons.slideshow_rounded, color: p, size: 20),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
@@ -211,8 +187,8 @@ class _DeckPropertiesDialogState extends State<_DeckPropertiesDialog>
                     text: 'Details'),
                 Tab(icon: Icon(Icons.label_outline_rounded, size: 16),
                     text: 'Tags & Notes'),
-                Tab(icon: Icon(Icons.insert_drive_file_outlined, size: 16),
-                    text: 'File'),
+                Tab(icon: Icon(Icons.bar_chart_rounded, size: 16),
+                    text: 'Info'),
               ],
             ),
 
@@ -222,15 +198,15 @@ class _DeckPropertiesDialogState extends State<_DeckPropertiesDialog>
                 controller: _tabs,
                 children: [
                   _DetailsTab(
-                    nameCtrl:    _nameCtrl,
-                    descCtrl:    _descCtrl,
-                    authorCtrl:  _authorCtrl,
-                    serviceDate: _serviceDate,
-                    isPinned:    _isPinned,
-                    isTemplate:  _isTemplate,
-                    primary:     p,
-                    onPickDate:  _pickDate,
-                    onClearDate: () => setState(() => _serviceDate = null),
+                    nameCtrl:          _nameCtrl,
+                    descCtrl:          _descCtrl,
+                    authorCtrl:        _authorCtrl,
+                    serviceDate:       _serviceDate,
+                    isPinned:          _isPinned,
+                    isTemplate:        _isTemplate,
+                    primary:           p,
+                    onPickDate:        _pickDate,
+                    onClearDate:       () => setState(() => _serviceDate = null),
                     onPinChanged:      (v) => setState(() => _isPinned   = v),
                     onTemplateChanged: (v) => setState(() => _isTemplate = v),
                   ),
@@ -242,10 +218,9 @@ class _DeckPropertiesDialogState extends State<_DeckPropertiesDialog>
                     onAddTag:  _addTag,
                     onRemove:  (t) => setState(() => _tags.remove(t)),
                   ),
-                  _FileTab(
-                    deck:          widget.deck,
-                    fileSizeBytes: _fileSizeBytes,
-                    primary:       p,
+                  _InfoTab(
+                    deck:    widget.deck,
+                    primary: p,
                   ),
                 ],
               ),
@@ -267,8 +242,7 @@ class _DeckPropertiesDialogState extends State<_DeckPropertiesDialog>
                   ),
                   const SizedBox(width: 10),
                   ElevatedButton.icon(
-                    onPressed: () =>
-                        Navigator.pop(context, _buildResult()),
+                    onPressed: () => Navigator.pop(context, _buildResult()),
                     icon:  const Icon(Icons.check_rounded, size: 18),
                     label: const Text('Save Properties',
                         style: TextStyle(fontWeight: FontWeight.bold)),
@@ -341,7 +315,6 @@ class _DetailsTab extends StatelessWidget {
               icon: Icons.person_outline_rounded),
           const SizedBox(height: 18),
 
-          // Service date
           _Label('Service Date'),
           const SizedBox(height: 6),
           Row(
@@ -370,8 +343,7 @@ class _DetailsTab extends StatelessWidget {
                               : 'Tap to set service date',
                           style: TextStyle(
                             fontSize: 13,
-                            color: serviceDate != null
-                                ? null : Colors.grey,
+                            color: serviceDate != null ? null : Colors.grey,
                           ),
                         ),
                       ],
@@ -395,7 +367,6 @@ class _DetailsTab extends StatelessWidget {
           const Divider(),
           const SizedBox(height: 12),
 
-          // Toggles
           _Toggle(
             icon:     Icons.push_pin_rounded,
             label:    'Pinned',
@@ -454,7 +425,7 @@ class _TagsNotesTab extends StatelessWidget {
                   textInputAction: TextInputAction.done,
                   onSubmitted:     (_) => onAddTag(),
                   decoration: InputDecoration(
-                    hintText:     'Add a tag…',
+                    hintText: 'Add a tag…',
                     border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(10)),
                     contentPadding: const EdgeInsets.symmetric(
@@ -505,14 +476,15 @@ class _TagsNotesTab extends StatelessWidget {
 
           _Label('Private Notes'),
           const SizedBox(height: 6),
-          Text('These notes are only visible to you — not shown during presentation.',
+          Text(
+              'These notes are only visible to you — not shown during presentation.',
               style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
           const SizedBox(height: 8),
           TextField(
             controller: notesCtrl,
             maxLines:   7,
             decoration: InputDecoration(
-              hintText:    'Planning notes, order of service, reminders…',
+              hintText: 'Planning notes, order of service, reminders…',
               border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(10)),
               contentPadding: const EdgeInsets.all(14),
@@ -524,28 +496,16 @@ class _TagsNotesTab extends StatelessWidget {
   }
 }
 
-// ── Tab 3: File Info ──────────────────────────────────────────────────────────
-class _FileTab extends StatelessWidget {
-  final Deck   deck;
-  final int?   fileSizeBytes;
-  final Color  primary;
+// ── Tab 3: Info (replaces old File tab — no file path / export) ───────────────
+class _InfoTab extends StatelessWidget {
+  final Deck  deck;
+  final Color primary;
 
-  const _FileTab({
-    required this.deck,
-    required this.fileSizeBytes,
-    required this.primary,
-  });
-
-  String _fmtSize(int bytes) {
-    if (bytes < 1024)        return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    return '${(bytes / (1024 * 1024)).toStringAsFixed(2)} MB';
-  }
+  const _InfoTab({required this.deck, required this.primary});
 
   @override
   Widget build(BuildContext context) {
     final fmt = DateFormat('MMM d, y  h:mm a');
-    final path = deck.filePath;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
@@ -553,14 +513,14 @@ class _FileTab extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _InfoCard(
-            icon:    Icons.insert_drive_file_rounded,
+            icon:    Icons.slideshow_rounded,
             primary: primary,
             rows: [
-              _InfoRow('ID',       deck.id),
-              _InfoRow('Slides',   '${deck.slideCount}'),
-              _InfoRow('Groups',   '${deck.groups.length}'),
-              if (fileSizeBytes != null)
-                _InfoRow('File size', _fmtSize(fileSizeBytes!)),
+              _InfoRow('ID',     deck.id),
+              _InfoRow('Slides', '${deck.slideCount}'),
+              _InfoRow('Groups', '${deck.groups.length}'),
+              if (deck.tags.isNotEmpty)
+                _InfoRow('Tags', deck.tags.join(', ')),
             ],
           ),
           const SizedBox(height: 14),
@@ -578,50 +538,36 @@ class _FileTab extends StatelessWidget {
                     DateFormat('EEEE, MMM d, y').format(deck.serviceDate!)),
             ],
           ),
+          const SizedBox(height: 14),
 
-          if (path != null) ...[
-            const SizedBox(height: 14),
-            _Label('File Location'),
-            const SizedBox(height: 6),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color:        Colors.grey.shade100,
-                borderRadius: BorderRadius.circular(10),
-                border:       Border.all(color: Colors.grey.shade300),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(path,
-                        style: const TextStyle(
-                            fontSize:   11,
-                            fontFamily: 'monospace'),
-                        overflow: TextOverflow.ellipsis),
-                  ),
-                  IconButton(
-                    icon:    const Icon(Icons.copy_rounded, size: 16),
-                    tooltip: 'Copy path',
-                    onPressed: () {
-                      Clipboard.setData(ClipboardData(text: path));
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                            content: Text('Path copied to clipboard'),
-                            behavior: SnackBarBehavior.floating,
-                            duration: Duration(seconds: 2)),
-                      );
-                    },
-                  ),
-                ],
-              ),
+          // Storage notice
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color:        primary.withValues(alpha: 0.05),
+              borderRadius: BorderRadius.circular(10),
+              border:       Border.all(color: primary.withValues(alpha: 0.15)),
             ),
-            const SizedBox(height: 8),
-            Text('.cpres files are standard JSON — you can back them up, '
-                 'share them, or open them in any text editor.',
-                style: TextStyle(
-                    fontSize: 11, color: Colors.grey.shade500,
-                    fontStyle: FontStyle.italic)),
-          ],
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.storage_rounded, color: primary, size: 18),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'All presentation data — including every slide, '
+                    'background, font, effect, and group setting — is '
+                    'saved automatically in the app\'s local database. '
+                    'Your work is never lost between sessions.',
+                    style: TextStyle(
+                        fontSize:  12,
+                        color:     Colors.grey.shade600,
+                        height:    1.55),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -644,7 +590,8 @@ Widget _field(
   String?  hint,
   IconData? icon,
   int      maxLines = 1,
-}) => Column(
+}) =>
+    Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _Label(label),
@@ -653,8 +600,8 @@ Widget _field(
           controller: ctrl,
           maxLines:   maxLines,
           decoration: InputDecoration(
-            hintText:       hint,
-            prefixIcon:     icon != null ? Icon(icon, size: 18) : null,
+            hintText:   hint,
+            prefixIcon: icon != null ? Icon(icon, size: 18) : null,
             border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10)),
             contentPadding: const EdgeInsets.symmetric(
@@ -737,8 +684,7 @@ class _InfoCard extends StatelessWidget {
         decoration: BoxDecoration(
           color:        primary.withValues(alpha: 0.04),
           borderRadius: BorderRadius.circular(10),
-          border:       Border.all(
-              color: primary.withValues(alpha: 0.14)),
+          border:       Border.all(color: primary.withValues(alpha: 0.14)),
         ),
         child: Column(
           children: rows.map((r) => Padding(
