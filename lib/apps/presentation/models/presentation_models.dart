@@ -1,4 +1,12 @@
 // lib/apps/presentation/models/presentation_models.dart
+//
+// Core models for Presentation Studio.
+// Deck  — a named collection of Slides with metadata.
+// Slide — a single presentation slide with full style support.
+// Data is persisted in a normalized SQLite DB (one row per slide).
+
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'slide_group.dart';
 
@@ -163,44 +171,43 @@ class SlideStyle {
   // ── serialisation ──────────────────────────────────────────────────────────
 
   Map<String, dynamic> toJson() => {
-        'bgImagePath':     bgImagePath,
-        'bgFit':           bgFit.name,
-        'bgImageOpacity':  bgImageOpacity,
-        'bgTint':          bgTint.toARGB32(),
-        'bgTintOpacity':   bgTintOpacity,
-        'overlay':         overlay.name,
-        'overlayColor':    overlayColor.toARGB32(),
-        'overlayOpacity':  overlayOpacity,
-        'fontFamily':      fontFamily,
-        'textAlign':       textAlign.name,
-        'titleScale':      titleScale,
-        'bodyScale':       bodyScale,
-        'titleBold':       titleBold,
-        'titleItalic':     titleItalic,
-        'bodyBold':        bodyBold,
-        'bodyItalic':      bodyItalic,
-        'letterSpacing':   letterSpacing,
-        'lineHeight':      lineHeight,
-        'textShadow':      textShadow,
-        'shadowColor':     shadowColor.toARGB32(),
-        'shadowBlur':      shadowBlur,
-        'showTextBox':     showTextBox,
-        'textBoxColor':    textBoxColor.toARGB32(),
-        'textBoxOpacity':  textBoxOpacity,
-        'textBoxRadius':   textBoxRadius,
-        'textBoxPaddingH': textBoxPaddingH,
-        'textBoxPaddingV': textBoxPaddingV,
-        'useGradient':     useGradient,
-        'gradientEnd':     gradientEnd.toARGB32(),
-        'gradientBegin':   SlideStyle.alignName(gradientBegin),
-        'gradientEndAlign':SlideStyle.alignName(gradientEndAlign),
+        'bgImagePath':      bgImagePath,
+        'bgFit':            bgFit.name,
+        'bgImageOpacity':   bgImageOpacity,
+        'bgTint':           bgTint.toARGB32(),
+        'bgTintOpacity':    bgTintOpacity,
+        'overlay':          overlay.name,
+        'overlayColor':     overlayColor.toARGB32(),
+        'overlayOpacity':   overlayOpacity,
+        'fontFamily':       fontFamily,
+        'textAlign':        textAlign.name,
+        'titleScale':       titleScale,
+        'bodyScale':        bodyScale,
+        'titleBold':        titleBold,
+        'titleItalic':      titleItalic,
+        'bodyBold':         bodyBold,
+        'bodyItalic':       bodyItalic,
+        'letterSpacing':    letterSpacing,
+        'lineHeight':       lineHeight,
+        'textShadow':       textShadow,
+        'shadowColor':      shadowColor.toARGB32(),
+        'shadowBlur':       shadowBlur,
+        'showTextBox':      showTextBox,
+        'textBoxColor':     textBoxColor.toARGB32(),
+        'textBoxOpacity':   textBoxOpacity,
+        'textBoxRadius':    textBoxRadius,
+        'textBoxPaddingH':  textBoxPaddingH,
+        'textBoxPaddingV':  textBoxPaddingV,
+        'useGradient':      useGradient,
+        'gradientEnd':      gradientEnd.toARGB32(),
+        'gradientBegin':    SlideStyle.alignName(gradientBegin),
+        'gradientEndAlign': SlideStyle.alignName(gradientEndAlign),
       };
 
   factory SlideStyle.fromJson(Map<String, dynamic> j) {
     T en<T>(List<T> vals, String? name, T def) =>
         vals.firstWhere((v) => (v as dynamic).name == name, orElse: () => def);
 
-    // Safe color parsing — fall back to defaults if the stored int is missing
     Color col(String key, int fallback) {
       final v = j[key];
       if (v == null) return Color(fallback);
@@ -208,37 +215,37 @@ class SlideStyle {
     }
 
     return SlideStyle(
-      bgImagePath:     j['bgImagePath'] as String?,
-      bgFit:           en(SlideBgFit.values,     j['bgFit'],     SlideBgFit.cover),
-      bgImageOpacity:  ((j['bgImageOpacity']  as num?) ?? 1.0).toDouble(),
-      bgTint:          col('bgTint',             0xFF000000),
-      bgTintOpacity:   ((j['bgTintOpacity']   as num?) ?? 0.0).toDouble(),
-      overlay:         en(SlideOverlay.values,   j['overlay'],   SlideOverlay.none),
-      overlayColor:    col('overlayColor',       0xFFFFFFFF),
-      overlayOpacity:  ((j['overlayOpacity']  as num?) ?? 0.08).toDouble(),
-      fontFamily:      (j['fontFamily']  as String?) ?? 'sans-serif',
-      textAlign:       en(SlideTextAlign.values, j['textAlign'], SlideTextAlign.center),
-      titleScale:      ((j['titleScale']      as num?) ?? 1.0).toDouble(),
-      bodyScale:       ((j['bodyScale']       as num?) ?? 1.0).toDouble(),
-      titleBold:       (j['titleBold']  as bool?) ?? true,
-      titleItalic:     (j['titleItalic'] as bool?) ?? false,
-      bodyBold:        (j['bodyBold']   as bool?) ?? false,
-      bodyItalic:      (j['bodyItalic'] as bool?) ?? false,
-      letterSpacing:   ((j['letterSpacing']   as num?) ?? 0.0).toDouble(),
-      lineHeight:      ((j['lineHeight']      as num?) ?? 1.5).toDouble(),
-      textShadow:      (j['textShadow'] as bool?) ?? false,
-      shadowColor:     col('shadowColor',        0xFF000000),
-      shadowBlur:      ((j['shadowBlur']      as num?) ?? 4.0).toDouble(),
-      showTextBox:     (j['showTextBox'] as bool?) ?? false,
-      textBoxColor:    col('textBoxColor',       0xFF000000),
-      textBoxOpacity:  ((j['textBoxOpacity']  as num?) ?? 0.45).toDouble(),
-      textBoxRadius:   ((j['textBoxRadius']   as num?) ?? 10.0).toDouble(),
-      textBoxPaddingH: ((j['textBoxPaddingH'] as num?) ?? 24.0).toDouble(),
-      textBoxPaddingV: ((j['textBoxPaddingV'] as num?) ?? 16.0).toDouble(),
-      useGradient:     (j['useGradient'] as bool?) ?? false,
-      gradientEnd:     col('gradientEnd',        0xFF000000),
-      gradientBegin:   SlideStyle.alignFromName(j['gradientBegin']),
-      gradientEndAlign:SlideStyle.alignFromName(j['gradientEndAlign'],
+      bgImagePath:      j['bgImagePath'] as String?,
+      bgFit:            en(SlideBgFit.values,     j['bgFit'],     SlideBgFit.cover),
+      bgImageOpacity:   ((j['bgImageOpacity']  as num?) ?? 1.0).toDouble(),
+      bgTint:           col('bgTint',             0xFF000000),
+      bgTintOpacity:    ((j['bgTintOpacity']   as num?) ?? 0.0).toDouble(),
+      overlay:          en(SlideOverlay.values,   j['overlay'],   SlideOverlay.none),
+      overlayColor:     col('overlayColor',       0xFFFFFFFF),
+      overlayOpacity:   ((j['overlayOpacity']  as num?) ?? 0.08).toDouble(),
+      fontFamily:       (j['fontFamily']  as String?) ?? 'sans-serif',
+      textAlign:        en(SlideTextAlign.values, j['textAlign'], SlideTextAlign.center),
+      titleScale:       ((j['titleScale']      as num?) ?? 1.0).toDouble(),
+      bodyScale:        ((j['bodyScale']       as num?) ?? 1.0).toDouble(),
+      titleBold:        (j['titleBold']   as bool?) ?? true,
+      titleItalic:      (j['titleItalic'] as bool?) ?? false,
+      bodyBold:         (j['bodyBold']    as bool?) ?? false,
+      bodyItalic:       (j['bodyItalic']  as bool?) ?? false,
+      letterSpacing:    ((j['letterSpacing']   as num?) ?? 0.0).toDouble(),
+      lineHeight:       ((j['lineHeight']      as num?) ?? 1.5).toDouble(),
+      textShadow:       (j['textShadow']  as bool?) ?? false,
+      shadowColor:      col('shadowColor',        0xFF000000),
+      shadowBlur:       ((j['shadowBlur']      as num?) ?? 4.0).toDouble(),
+      showTextBox:      (j['showTextBox']  as bool?) ?? false,
+      textBoxColor:     col('textBoxColor',       0xFF000000),
+      textBoxOpacity:   ((j['textBoxOpacity']  as num?) ?? 0.45).toDouble(),
+      textBoxRadius:    ((j['textBoxRadius']   as num?) ?? 10.0).toDouble(),
+      textBoxPaddingH:  ((j['textBoxPaddingH'] as num?) ?? 24.0).toDouble(),
+      textBoxPaddingV:  ((j['textBoxPaddingV'] as num?) ?? 16.0).toDouble(),
+      useGradient:      (j['useGradient']  as bool?) ?? false,
+      gradientEnd:      col('gradientEnd',        0xFF000000),
+      gradientBegin:    SlideStyle.alignFromName(j['gradientBegin']),
+      gradientEndAlign: SlideStyle.alignFromName(j['gradientEndAlign'],
           fallback: Alignment.bottomCenter),
     );
   }
@@ -292,6 +299,8 @@ class Slide {
     SlideStyle? style,
   }) : style = style ?? SlideStyle();
 
+  // ── JSON (for legacy data migration only) ─────────────────────────────────
+
   Map<String, dynamic> toJson() => {
         'id':        id,
         'type':      type,
@@ -305,7 +314,6 @@ class Slide {
       };
 
   factory Slide.fromJson(Map<String, dynamic> j) {
-    // Safe color parsing
     Color col(String key, int fallback) {
       final v = j[key];
       if (v == null) return Color(fallback);
@@ -313,17 +321,69 @@ class Slide {
     }
 
     return Slide(
-      id:        (j['id']   as String?) ?? '',
-      type:      (j['type'] as String?) ?? 'blank',
-      title:     (j['title'] as String?) ?? '',
-      body:      (j['body']  as String?) ?? '',
+      id:        (j['id']        as String?) ?? '',
+      type:      (j['type']      as String?) ?? 'blank',
+      title:     (j['title']     as String?) ?? '',
+      body:      (j['body']      as String?) ?? '',
       reference: (j['reference'] as String?) ?? '',
       bgColor:   col('bgColor',   0xFF1A3A5C),
       textColor: col('textColor', 0xFFFFFFFF),
       fontSize:  ((j['fontSize'] as num?) ?? 36).toDouble(),
-      style: j['style'] is Map<String, dynamic>
-          ? SlideStyle.fromJson(j['style'] as Map<String, dynamic>)
+      style: j['style'] is Map
+          ? SlideStyle.fromJson(
+              Map<String, dynamic>.from(j['style'] as Map))
           : SlideStyle(),
+    );
+  }
+
+  // ── DB row (normalized slides table) ─────────────────────────────────────
+
+  /// Convert to a DB row for the `slides` table.
+  /// [deckId] and [order] are supplied by the caller.
+  Map<String, dynamic> toRow(String deckId, int order) => {
+        'id':            id,
+        'deck_id':       deckId,
+        'slide_order':   order,
+        'type':          type,
+        'title':         title,
+        'body':          body,
+        'reference':     reference,
+        'bg_color':      bgColor.toARGB32(),
+        'text_color':    textColor.toARGB32(),
+        'font_size':     fontSize,
+        'style_json':    jsonEncode(style.toJson()),
+      };
+
+  /// Reconstruct a Slide from a DB row.
+  factory Slide.fromRow(Map<String, dynamic> row) {
+    Color col(String key, int fallback) {
+      final v = row[key];
+      if (v == null) return Color(fallback);
+      return Color((v as num).toInt());
+    }
+
+    SlideStyle parseStyle() {
+      try {
+        final raw = row['style_json'];
+        if (raw == null || (raw as String).isEmpty) return SlideStyle();
+        final decoded = jsonDecode(raw);
+        if (decoded is! Map) return SlideStyle();
+        return SlideStyle.fromJson(Map<String, dynamic>.from(decoded));
+      } catch (_) {
+        return SlideStyle();
+      }
+    }
+
+    return Slide(
+      id:        (row['id']        as String?) ?? '',
+      type:      (row['type']      as String?) ?? 'blank',
+      title:     (row['title']     as String?) ?? '',
+      body:      (row['body']      as String?) ?? '',
+      reference: (row['reference'] as String?) ?? '',
+      bgColor:   col('bg_color',   0xFF1A3A5C),
+      textColor: col('text_color', 0xFFFFFFFF),
+      fontSize:  ((row['font_size'] as num?) ?? 36).toDouble(),
+      style:     parseStyle(),
     );
   }
 }
@@ -373,6 +433,83 @@ class Deck {
   static String safeFileName(String name) =>
       name.replaceAll(RegExp(r'[<>:"/\\|?*\x00-\x1F]'), '_').trim();
 
+  // ── DB row (decks table — no slides blob) ─────────────────────────────────
+
+  Map<String, dynamic> toRow() => {
+        'id':               id,
+        'name':             name,
+        'description':      description,
+        'author':           author,
+        'notes':            notes,
+        'service_date':     serviceDate?.toIso8601String(),
+        'tags_json':        jsonEncode(tags),
+        'is_template':      isTemplate  ? 1 : 0,
+        'is_pinned':        isPinned    ? 1 : 0,
+        'sort_order':       sortOrder,
+        'groups_json':      jsonEncode(groups.map((g) => g.toJson()).toList()),
+        'created_at':       createdAt.toIso8601String(),
+        'last_used_at':     lastUsedAt?.toIso8601String(),
+        'last_modified_at': lastModifiedAt?.toIso8601String(),
+      };
+
+  /// Reconstruct a Deck (without slides) from a DB row.
+  /// Call [db.loadSlidesForDeck] separately and assign to [slides].
+  factory Deck.fromRow(Map<String, dynamic> row) {
+    DateTime? dt(String key) {
+      final v = row[key] as String?;
+      if (v == null || v.isEmpty) return null;
+      return DateTime.tryParse(v);
+    }
+
+    List<String> parseTags() {
+      try {
+        final raw = row['tags_json'];
+        if (raw == null || (raw as String).isEmpty) return [];
+        final list = jsonDecode(raw);
+        if (list is! List) return [];
+        return list.whereType<String>().toList();
+      } catch (_) { return []; }
+    }
+
+    List<SlideGroup> parseGroups() {
+      try {
+        final raw = row['groups_json'];
+        if (raw == null || (raw as String).isEmpty) return [];
+        final list = jsonDecode(raw);
+        if (list is! List) return [];
+        return list
+            .where((e) => e is Map)
+            .map((e) {
+              try {
+                return SlideGroup.fromJson(Map<String, dynamic>.from(e as Map));
+              } catch (_) { return null; }
+            })
+            .whereType<SlideGroup>()
+            .toList();
+      } catch (_) { return []; }
+    }
+
+    return Deck(
+      id:             (row['id']   as String?) ?? '',
+      name:           (row['name'] as String?) ?? 'Untitled',
+      description:    (row['description'] as String?) ?? '',
+      author:         (row['author']      as String?) ?? '',
+      notes:          (row['notes']       as String?) ?? '',
+      serviceDate:    dt('service_date'),
+      tags:           parseTags(),
+      isTemplate:     (row['is_template'] as int?) == 1,
+      isPinned:       (row['is_pinned']   as int?) == 1,
+      sortOrder:      ((row['sort_order'] as num?) ?? 0).toInt(),
+      groups:         parseGroups(),
+      createdAt:      dt('created_at')    ?? DateTime.now(),
+      lastUsedAt:     dt('last_used_at'),
+      lastModifiedAt: dt('last_modified_at'),
+      slides:         [], // populated by DB after this call
+    );
+  }
+
+  // ── Legacy JSON (used only for migration of old blob data) ────────────────
+
   Map<String, dynamic> toJson() => {
         'id':             id,
         'name':           name,
@@ -392,48 +529,40 @@ class Deck {
       };
 
   factory Deck.fromJson(Map<String, dynamic> j) {
-    // Safe slides parsing — never throw on a missing/null slides list
     List<Slide> parseSlides() {
       final raw = j['slides'];
       if (raw == null || raw is! List) return [];
       return raw
-          .whereType<Map<String, dynamic>>()
-          .map((s) {
+          .where((e) => e is Map)
+          .map((e) {
             try {
-              return Slide.fromJson(s);
-            } catch (e) {
-              return null;
-            }
+              return Slide.fromJson(Map<String, dynamic>.from(e as Map));
+            } catch (_) { return null; }
           })
           .whereType<Slide>()
           .toList();
     }
 
-    // Safe groups parsing
     List<SlideGroup> parseGroups() {
       final raw = j['groups'];
       if (raw == null || raw is! List) return [];
       return raw
-          .whereType<Map<String, dynamic>>()
-          .map((g) {
+          .where((e) => e is Map)
+          .map((e) {
             try {
-              return SlideGroup.fromJson(g);
-            } catch (e) {
-              return null;
-            }
+              return SlideGroup.fromJson(Map<String, dynamic>.from(e as Map));
+            } catch (_) { return null; }
           })
           .whereType<SlideGroup>()
           .toList();
     }
 
-    // Safe tags parsing
     List<String> parseTags() {
       final raw = j['tags'];
       if (raw == null || raw is! List) return [];
       return raw.whereType<String>().toList();
     }
 
-    // Safe DateTime parsing
     DateTime? dt(String key) {
       final v = j[key] as String?;
       if (v == null || v.isEmpty) return null;
@@ -480,7 +609,11 @@ class StreamSettings {
     return rtmpUrl;
   }
 
-  StreamSettings copyWith({String? rtmpUrl, String? streamKey, String? platform}) =>
+  StreamSettings copyWith({
+    String? rtmpUrl,
+    String? streamKey,
+    String? platform,
+  }) =>
       StreamSettings(
         rtmpUrl:   rtmpUrl   ?? this.rtmpUrl,
         streamKey: streamKey ?? this.streamKey,
@@ -517,7 +650,11 @@ class RecordSettings {
     this.format   = 'mp4',
   });
 
-  RecordSettings copyWith({String? savePath, String? quality, String? format}) =>
+  RecordSettings copyWith({
+    String? savePath,
+    String? quality,
+    String? format,
+  }) =>
       RecordSettings(
         savePath: savePath ?? this.savePath,
         quality:  quality  ?? this.quality,

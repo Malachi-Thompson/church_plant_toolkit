@@ -1,22 +1,36 @@
 // lib/apps/presentation/models/presentation_state.dart
+//
+// ChangeNotifier that owns all deck/slide state.
+// Persists via PresentationDatabase (normalized decks + slides tables).
+//
+// Save strategy:
+//   * Any mutation calls markDirty() which starts an 800ms debounce.
+//   * addSlide() and notifySlideChanged() immediately write the changed
+//     slide to the DB so nothing is lost if the window closes fast.
+//   * A 30s periodic timer flushes any remaining unsaved changes.
+//   * WidgetsBindingObserver flushes on app pause/detach/inactive.
+
 import 'dart:async';
 import 'dart:developer' as dev;
-import 'package:flutter/foundation.dart';
-import 'package:uuid/uuid.dart';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
+import 'package:uuid/uuid.dart';
+
+import 'presentation_database.dart';
 import 'presentation_models.dart';
 import 'presentation_service.dart';
 import 'slide_defaults.dart';
 import 'slide_group.dart';
 import '../songselect/songselect_import.dart';
-import '../../../theme.dart';                    // ← contrastOn lives here
+import '../../../theme.dart';
 
 enum SaveStatus { saved, saving, unsaved }
 
-class PresentationState extends ChangeNotifier {
+class PresentationState extends ChangeNotifier with WidgetsBindingObserver {
   final _service = PresentationService();
 
-  // ── Public state ───────────────────────────────────────────────────────────
+  // -- Public state -----------------------------------------------------------
   List<Deck>     decks          = [];
   Deck?          openDeck;
   Slide?         selectedSlide;
@@ -26,19 +40,20 @@ class PresentationState extends ChangeNotifier {
   StreamSettings streamSettings = StreamSettings();
   RecordSettings recordSettings = RecordSettings();
 
-  SaveStatus  saveStatus = SaveStatus.saved;
-  DateTime?   lastSaved;
-  bool        loaded     = false;
-  bool        loading    = false;
-  String?     loadError;
+  SaveStatus saveStatus = SaveStatus.saved;
+  DateTime?  lastSaved;
+  bool       loaded    = false;
+  bool       loading   = false;
+  String?    loadError;
 
-  // ── Internal ───────────────────────────────────────────────────────────────
+  // -- Internal ---------------------------------------------------------------
   Timer? _debounce;
   Timer? _periodic;
 
-  // ── Init / dispose ─────────────────────────────────────────────────────────
+  // -- Init / dispose ---------------------------------------------------------
 
   Future<void> init() async {
+    WidgetsBinding.instance.addObserver(this);
     await _loadAll();
     _periodic = Timer.periodic(
       const Duration(seconds: 30),
@@ -47,18 +62,30 @@ class PresentationState extends ChangeNotifier {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused   ||
+        state == AppLifecycleState.detached ||
+        state == AppLifecycleState.inactive) {
+      if (saveStatus != SaveStatus.saved) flushSave();
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _periodic?.cancel();
     _debounce?.cancel();
     if (saveStatus != SaveStatus.saved) {
-      if (openDeck != null) _service.saveDeck(openDeck!);
-      _service.saveDecks(decks);
-      SongCollectionStore.saveAll();
+      scheduleMicrotask(() {
+        if (openDeck != null) _service.saveDeck(openDeck!);
+        _service.saveDecks(decks);
+        SongCollectionStore.saveAll();
+      });
     }
     super.dispose();
   }
 
-  // ── Load ───────────────────────────────────────────────────────────────────
+  // -- Load -------------------------------------------------------------------
 
   Future<void> _loadAll() async {
     if (loading) return;
@@ -87,7 +114,7 @@ class PresentationState extends ChangeNotifier {
     }
   }
 
-  // ── Save ───────────────────────────────────────────────────────────────────
+  // -- Save -------------------------------------------------------------------
 
   void markDirty() {
     saveStatus = SaveStatus.unsaved;
@@ -120,15 +147,29 @@ class PresentationState extends ChangeNotifier {
     }
   }
 
-  // ── Deck CRUD ──────────────────────────────────────────────────────────────
+  /// Immediately write one slide to DB (before debounce fires).
+  Future<void> _quickSaveSlide(Slide slide) async {
+    if (openDeck == null) return;
+    final idx = openDeck!.slides.indexOf(slide);
+    if (idx < 0) return;
+    try {
+      await PresentationDatabase.instance
+          .saveSlide(openDeck!.id, slide, idx);
+    } catch (e) {
+      dev.log('[PresentationState] _quickSaveSlide error: $e');
+    }
+  }
+
+  // -- Deck CRUD --------------------------------------------------------------
 
   Future<Deck> createDeck(String name) async {
     final maxOrder = decks.isEmpty
         ? 0
         : decks.map((d) => d.sortOrder).reduce((a, b) => a > b ? a : b) + 1;
+
     final deck = Deck(
       id:        const Uuid().v4(),
-      name:      name.isEmpty ? 'New Presentation' : name,
+      name:      name.isEmpty ? 'New Deck' : name,
       slides:    [],
       createdAt: DateTime.now(),
       sortOrder: maxOrder,
@@ -177,7 +218,7 @@ class PresentationState extends ChangeNotifier {
             bgColor:   s.bgColor,
             textColor: s.textColor,
             fontSize:  s.fontSize,
-            style:     s.style,
+            style:     s.style.copyWith(),
           )).toList(),
     );
     final idx = decks.indexOf(deck);
@@ -199,30 +240,33 @@ class PresentationState extends ChangeNotifier {
     openDeck        = deck;
     selectedSlide   = null;
     notifyListeners();
-    _service.saveDeck(deck);
+    _service.saveDeck(deck).catchError(
+        (e) => dev.log('[PresentationState] openDeckForEditing: $e'));
   }
 
   void closeOpenDeck() {
+    if (saveStatus != SaveStatus.saved) flushSave();
     openDeck      = null;
     selectedSlide = null;
     notifyListeners();
   }
 
-  // ── Slide CRUD ─────────────────────────────────────────────────────────────
+  // -- Slide CRUD -------------------------------------------------------------
 
   void addSlide(String type, {required Color primary}) {
     if (openDeck == null) return;
-    final bg = SlideDefaults.background(type, primary);
+    final bg    = SlideDefaults.background(type, primary);
     final slide = Slide(
       id:        const Uuid().v4(),
       type:      type,
       title:     SlideDefaults.title(type),
       body:      SlideDefaults.body(type),
       bgColor:   bg,
-      textColor: contrastOn(bg),   // ← now resolved via theme.dart import
+      textColor: contrastOn(bg),
     );
     openDeck!.slides.add(slide);
     selectedSlide = slide;
+    _quickSaveSlide(slide);
     markDirty();
   }
 
@@ -246,9 +290,12 @@ class PresentationState extends ChangeNotifier {
     notifyListeners();
   }
 
-  void notifySlideChanged() => markDirty();
+  void notifySlideChanged() {
+    if (selectedSlide != null) _quickSaveSlide(selectedSlide!);
+    markDirty();
+  }
 
-  // ── Group CRUD ─────────────────────────────────────────────────────────────
+  // -- Group CRUD -------------------------------------------------------------
 
   void createGroup(SlideGroup g) {
     openDeck?.groups.add(g);
@@ -285,7 +332,7 @@ class PresentationState extends ChangeNotifier {
     markDirty();
   }
 
-  // ── Song collections ───────────────────────────────────────────────────────
+  // -- Song collections -------------------------------------------------------
 
   void importCollection(SongCollection collection) {
     if (openDeck == null) return;
@@ -321,8 +368,7 @@ class PresentationState extends ChangeNotifier {
   void removeCollection(String collId) {
     if (openDeck == null) return;
     SongCollectionStore.removeFromDeck(collId, openDeck!);
-    if (selectedSlide != null &&
-        _collIdOfSlide(selectedSlide!) == collId) {
+    if (selectedSlide != null && _collIdOfSlide(selectedSlide!) == collId) {
       selectedSlide = null;
     }
     markDirty();
@@ -340,7 +386,7 @@ class PresentationState extends ChangeNotifier {
     return s.reference.substring(tag.length).split('|').first;
   }
 
-  // ── Stream / record ────────────────────────────────────────────────────────
+  // -- Stream / record --------------------------------------------------------
 
   Future<void> saveStreamSettings(StreamSettings s) async {
     streamSettings = s;

@@ -1,16 +1,20 @@
 // lib/apps/presentation/models/presentation_database.dart
 //
-// Unified SQLite persistence for Presentation Studio.
+// Normalized SQLite persistence for Presentation Studio.
 //
-// IMPORTANT: sqfliteFfiInit() and databaseFactory = databaseFactoryFfi
-// are now called in main() BEFORE runApp(), not here lazily.
-// Calling them lazily inside an async function can silently fail on Windows.
+// Schema (v2):
+//   decks  — one row per deck (metadata + groups JSON, NO slides blob)
+//   slides — one row per slide (deck_id FK, slide_order, all slide fields)
+//   app_settings — key/value for stream/record settings
 //
-// pubspec.yaml dependencies needed:
-//   sqflite: ^2.3.3
-//   sqflite_common_ffi: ^2.3.3
-//   path_provider: ^2.1.0
-//   path: ^1.9.0
+// Migration from v1:
+//   Old v1 schema stored all slides in a `deck_json` TEXT blob.
+//   On first open with v2, all old decks are read, their slides
+//   are written into the new `slides` table, then the old `decks`
+//   table is dropped and replaced with the new normalized schema.
+//
+// IMPORTANT: sqfliteFfiInit() + databaseFactory = databaseFactoryFfi
+// MUST be called synchronously in main() BEFORE runApp() on Windows/Linux/macOS.
 
 import 'dart:convert';
 import 'dart:developer' as dev;
@@ -25,8 +29,9 @@ import 'presentation_models.dart';
 // Schema constants
 // ─────────────────────────────────────────────────────────────────────────────
 const _kDbName    = 'presentation_studio.db';
-const _kDbVersion = 1;
+const _kDbVersion = 2;
 const _tDecks     = 'decks';
+const _tSlides    = 'slides';
 const _tSettings  = 'app_settings';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -38,7 +43,7 @@ class PresentationDatabase {
 
   Database? _db;
 
-  // ── open / init ────────────────────────────────────────────────────────────
+  // ── open ───────────────────────────────────────────────────────────────────
 
   Future<Database> get db async {
     _db ??= await _open();
@@ -46,8 +51,6 @@ class PresentationDatabase {
   }
 
   Future<Database> _open() async {
-    // sqfliteFfiInit() is now called in main() before runApp() on desktop.
-    // We do NOT call it here to avoid race conditions on Windows.
     final docsDir = await getApplicationDocumentsDirectory();
     final dbPath  = p.join(docsDir.path, _kDbName);
     dev.log('[PresentationDatabase] Opening DB at: $dbPath');
@@ -59,103 +62,262 @@ class PresentationDatabase {
       onUpgrade: _onUpgrade,
     );
 
-    dev.log('[PresentationDatabase] DB opened successfully');
+    dev.log('[PresentationDatabase] DB opened (v$_kDbVersion)');
     return database;
   }
 
+  // ── onCreate — fresh install ───────────────────────────────────────────────
+
   Future<void> _onCreate(Database db, int version) async {
     dev.log('[PresentationDatabase] Creating schema v$version');
+    await _createNormalizedSchema(db);
+    await _createSettingsTable(db);
+    dev.log('[PresentationDatabase] Schema created');
+  }
 
+  // ── onUpgrade — v1 blob → v2 normalized ───────────────────────────────────
+
+  Future<void> _onUpgrade(Database db, int oldV, int newV) async {
+    dev.log('[PresentationDatabase] Upgrading $oldV → $newV');
+
+    if (oldV == 1 && newV == 2) {
+      await _migrateV1ToV2(db);
+    }
+  }
+
+  // ── Schema builders ────────────────────────────────────────────────────────
+
+  Future<void> _createNormalizedSchema(Database db) async {
+    // Decks table — no slides blob
     await db.execute('''
       CREATE TABLE $_tDecks (
         id               TEXT PRIMARY KEY,
         name             TEXT NOT NULL,
-        sort_order       INTEGER NOT NULL DEFAULT 0,
-        is_pinned        INTEGER NOT NULL DEFAULT 0,
+        description      TEXT NOT NULL DEFAULT '',
+        author           TEXT NOT NULL DEFAULT '',
+        notes            TEXT NOT NULL DEFAULT '',
+        service_date     TEXT,
+        tags_json        TEXT NOT NULL DEFAULT '[]',
         is_template      INTEGER NOT NULL DEFAULT 0,
+        is_pinned        INTEGER NOT NULL DEFAULT 0,
+        sort_order       INTEGER NOT NULL DEFAULT 0,
+        groups_json      TEXT NOT NULL DEFAULT '[]',
         created_at       TEXT NOT NULL,
         last_used_at     TEXT,
-        last_modified_at TEXT,
-        service_date     TEXT,
-        deck_json        TEXT NOT NULL
+        last_modified_at TEXT
       )
     ''');
 
+    // Slides table — normalized, one row per slide
     await db.execute('''
-      CREATE TABLE $_tSettings (
+      CREATE TABLE $_tSlides (
+        id           TEXT PRIMARY KEY,
+        deck_id      TEXT NOT NULL REFERENCES $_tDecks(id) ON DELETE CASCADE,
+        slide_order  INTEGER NOT NULL DEFAULT 0,
+        type         TEXT NOT NULL DEFAULT 'blank',
+        title        TEXT NOT NULL DEFAULT '',
+        body         TEXT NOT NULL DEFAULT '',
+        reference    TEXT NOT NULL DEFAULT '',
+        bg_color     INTEGER NOT NULL DEFAULT 0xFF1A3A5C,
+        text_color   INTEGER NOT NULL DEFAULT 0xFFFFFFFF,
+        font_size    REAL    NOT NULL DEFAULT 36,
+        style_json   TEXT    NOT NULL DEFAULT '{}'
+      )
+    ''');
+
+    // Index for fast per-deck slide queries
+    await db.execute(
+        'CREATE INDEX idx_slides_deck ON $_tSlides(deck_id, slide_order)');
+  }
+
+  Future<void> _createSettingsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS $_tSettings (
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL
       )
     ''');
-
-    dev.log('[PresentationDatabase] Schema created');
   }
 
-  Future<void> _onUpgrade(Database db, int oldV, int newV) async {
-    dev.log('[PresentationDatabase] Upgrade $oldV -> $newV');
-  }
+  // ── v1 → v2 migration ─────────────────────────────────────────────────────
 
-  // ── DECKS ──────────────────────────────────────────────────────────────────
+  Future<void> _migrateV1ToV2(Database db) async {
+    dev.log('[PresentationDatabase] Starting v1→v2 migration');
 
-  Future<List<Deck>> loadDecks() async {
-    final d    = await db;
-    final rows = await d.query(_tDecks, orderBy: 'sort_order DESC');
-    dev.log('[PresentationDatabase] Loading ${rows.length} deck rows');
+    // 1. Read all old deck blobs
+    final List<Map<String, dynamic>> oldRows;
+    try {
+      oldRows = await db.query('decks');
+    } catch (e) {
+      dev.log('[PresentationDatabase] Migration: could not read old decks: $e');
+      await _createNormalizedSchema(db);
+      return;
+    }
 
-    final decks = <Deck>[];
-    for (final row in rows) {
+    dev.log('[PresentationDatabase] Migration: ${oldRows.length} old deck rows');
+
+    // 2. Parse each old deck
+    final List<Deck> migratedDecks = [];
+    for (final row in oldRows) {
       try {
-        final jsonStr = row['deck_json'];
-        if (jsonStr == null || jsonStr is! String || jsonStr.isEmpty) {
-          dev.log('[PresentationDatabase] Skipping row ${row['id']}: empty deck_json');
-          continue;
-        }
-        final json = jsonDecode(jsonStr);
-        if (json is! Map<String, dynamic>) {
-          dev.log('[PresentationDatabase] Skipping row ${row['id']}: deck_json is not a Map');
-          continue;
-        }
-        decks.add(Deck.fromJson(json));
-      } catch (e, st) {
-        // Log the full error so you can see exactly what's failing
-        dev.log('[PresentationDatabase] Skipping corrupt row ${row['id']}: $e\n$st');
+        final jsonStr = row['deck_json'] as String?;
+        if (jsonStr == null || jsonStr.isEmpty) continue;
+        final j = jsonDecode(jsonStr);
+        if (j is! Map) continue;
+        migratedDecks.add(Deck.fromJson(Map<String, dynamic>.from(j)));
+      } catch (e) {
+        dev.log('[PresentationDatabase] Migration: skipping corrupt row: $e');
       }
     }
 
-    dev.log('[PresentationDatabase] Successfully loaded ${decks.length} decks');
+    // 3. Drop old tables and create new schema
+    await db.execute('DROP TABLE IF EXISTS decks');
+    await _createNormalizedSchema(db);
+
+    // 4. Write migrated decks into new normalized tables
+    for (final deck in migratedDecks) {
+      try {
+        await db.insert(_tDecks, deck.toRow(),
+            conflictAlgorithm: ConflictAlgorithm.replace);
+
+        for (var i = 0; i < deck.slides.length; i++) {
+          await db.insert(_tSlides, deck.slides[i].toRow(deck.id, i),
+              conflictAlgorithm: ConflictAlgorithm.replace);
+        }
+      } catch (e) {
+        dev.log('[PresentationDatabase] Migration: error writing deck '
+            '"${deck.name}": $e');
+      }
+    }
+
+    dev.log('[PresentationDatabase] Migration complete: '
+        '${migratedDecks.length} decks migrated');
+  }
+
+  // ── LOAD ───────────────────────────────────────────────────────────────────
+
+  /// Load all decks with their slides in one efficient pass.
+  Future<List<Deck>> loadDecks() async {
+    final d = await db;
+
+    // Load all deck rows
+    final deckRows = await d.query(_tDecks, orderBy: 'sort_order DESC, created_at DESC');
+    dev.log('[PresentationDatabase] Loading ${deckRows.length} decks');
+
+    if (deckRows.isEmpty) return [];
+
+    // Load all slides in one query, ordered by deck and position
+    final slideRows = await d.query(_tSlides,
+        orderBy: 'deck_id, slide_order ASC');
+
+    // Group slides by deck_id
+    final slidesByDeck = <String, List<Slide>>{};
+    for (final row in slideRows) {
+      final deckId = row['deck_id'] as String;
+      try {
+        slidesByDeck.putIfAbsent(deckId, () => []).add(Slide.fromRow(row));
+      } catch (e) {
+        dev.log('[PresentationDatabase] Skipping corrupt slide row: $e');
+      }
+    }
+
+    // Assemble decks with their slides
+    final decks = <Deck>[];
+    for (final row in deckRows) {
+      try {
+        final deck = Deck.fromRow(row);
+        deck.slides.addAll(slidesByDeck[deck.id] ?? []);
+        decks.add(deck);
+      } catch (e) {
+        dev.log('[PresentationDatabase] Skipping corrupt deck row: $e');
+      }
+    }
+
+    dev.log('[PresentationDatabase] Loaded ${decks.length} decks with '
+        '${slidesByDeck.values.fold(0, (s, l) => s + l.length)} total slides');
     return decks;
   }
 
+  // ── SAVE DECK ──────────────────────────────────────────────────────────────
+
+  /// Save a deck's metadata AND all its slides atomically.
+  /// Replaces any existing slides for this deck.
   Future<void> saveDeck(Deck deck) async {
-    final d   = await db;
-    final row = _deckToRow(deck);
-    await d.insert(
-      _tDecks,
-      row,
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
-    dev.log('[PresentationDatabase] Saved "${deck.name}" (${deck.slides.length} slides)');
+    final d = await db;
+    await d.transaction((txn) async {
+      // Upsert deck metadata row
+      await txn.insert(_tDecks, deck.toRow(),
+          conflictAlgorithm: ConflictAlgorithm.replace);
+
+      // Delete all existing slides for this deck, then re-insert
+      await txn.delete(_tSlides,
+          where: 'deck_id = ?', whereArgs: [deck.id]);
+
+      for (var i = 0; i < deck.slides.length; i++) {
+        await txn.insert(_tSlides, deck.slides[i].toRow(deck.id, i),
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    });
+    dev.log('[PresentationDatabase] Saved deck "${deck.name}" '
+        '(${deck.slides.length} slides)');
   }
 
+  /// Save multiple decks atomically.
   Future<void> saveDecks(List<Deck> decks) async {
     if (decks.isEmpty) return;
     final d = await db;
     await d.transaction((txn) async {
       for (final deck in decks) {
-        await txn.insert(
-          _tDecks,
-          _deckToRow(deck),
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
+        await txn.insert(_tDecks, deck.toRow(),
+            conflictAlgorithm: ConflictAlgorithm.replace);
+
+        await txn.delete(_tSlides,
+            where: 'deck_id = ?', whereArgs: [deck.id]);
+
+        for (var i = 0; i < deck.slides.length; i++) {
+          await txn.insert(_tSlides, deck.slides[i].toRow(deck.id, i),
+              conflictAlgorithm: ConflictAlgorithm.replace);
+        }
       }
     });
     dev.log('[PresentationDatabase] Batch-saved ${decks.length} decks');
   }
 
+  // ── SAVE SINGLE SLIDE ──────────────────────────────────────────────────────
+
+  /// Update a single slide in place (e.g. after editing content/style).
+  /// Does NOT rewrite all slides — just upserts this one row.
+  Future<void> saveSlide(String deckId, Slide slide, int order) async {
+    final d = await db;
+    await d.insert(_tSlides, slide.toRow(deckId, order),
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// Update only the slide_order for a batch of slides (after reorder).
+  Future<void> updateSlideOrders(
+      String deckId, List<String> orderedIds) async {
+    final d = await db;
+    await d.transaction((txn) async {
+      for (var i = 0; i < orderedIds.length; i++) {
+        await txn.update(
+          _tSlides,
+          {'slide_order': i},
+          where: 'id = ? AND deck_id = ?',
+          whereArgs: [orderedIds[i], deckId],
+        );
+      }
+    });
+  }
+
+  // ── DELETE ─────────────────────────────────────────────────────────────────
+
+  /// Delete a deck and all its slides (CASCADE handles slides automatically).
   Future<void> deleteDeck(String deckId) async {
     final d = await db;
-    await d.delete(_tDecks, where: 'id = ?', whereArgs: [deckId]);
-    dev.log('[PresentationDatabase] Deleted $deckId');
+    // Explicitly delete slides first for safety (in case FK cascade is off)
+    await d.delete(_tSlides, where: 'deck_id = ?', whereArgs: [deckId]);
+    await d.delete(_tDecks,  where: 'id = ?',      whereArgs: [deckId]);
+    dev.log('[PresentationDatabase] Deleted deck $deckId');
   }
 
   // ── APP SETTINGS ───────────────────────────────────────────────────────────
@@ -190,7 +352,7 @@ class PresentationDatabase {
   Future<void> saveRecordSettings(RecordSettings s) =>
       _setSetting('record_settings', jsonEncode(s.toJson()));
 
-  // ── SETTINGS HELPERS ───────────────────────────────────────────────────────
+  // ── Settings helpers ───────────────────────────────────────────────────────
 
   Future<String?> _getSetting(String key) async {
     final d    = await db;
@@ -212,25 +374,7 @@ class PresentationDatabase {
     );
   }
 
-  // ── ROW BUILDER ────────────────────────────────────────────────────────────
-
-  Map<String, dynamic> _deckToRow(Deck deck) {
-    final json = jsonEncode(deck.toJson());
-    return {
-      'id':               deck.id,
-      'name':             deck.name,
-      'sort_order':       deck.sortOrder,
-      'is_pinned':        deck.isPinned   ? 1 : 0,
-      'is_template':      deck.isTemplate ? 1 : 0,
-      'created_at':       deck.createdAt.toIso8601String(),
-      'last_used_at':     deck.lastUsedAt?.toIso8601String(),
-      'last_modified_at': deck.lastModifiedAt?.toIso8601String(),
-      'service_date':     deck.serviceDate?.toIso8601String(),
-      'deck_json':        json,
-    };
-  }
-
-  // ── CLOSE ──────────────────────────────────────────────────────────────────
+  // ── Close ──────────────────────────────────────────────────────────────────
 
   Future<void> close() async {
     await _db?.close();
