@@ -78,20 +78,17 @@ class _PresentationScreenState extends State<PresentationScreen> {
 
   // ── Save helpers ───────────────────────────────────────────────────────────
 
-  /// Mark data changed and schedule a debounced write.
   void _markDirty() {
     setState(() => _saveStatus = _SaveStatus.unsaved);
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 800), _flushSave);
   }
 
-  /// Write the open deck (and all decks) to disk immediately.
   Future<void> _flushSave() async {
     _debounce?.cancel();
     _debounce = null;
     setState(() => _saveStatus = _SaveStatus.saving);
     try {
-      // Save the open deck first for speed, then sync the full list
       if (_openDeck != null) {
         _openDeck!.lastModifiedAt = DateTime.now();
         await _service.saveDeck(_openDeck!);
@@ -121,7 +118,7 @@ class _PresentationScreenState extends State<PresentationScreen> {
     );
     if (result == null || result == _UnsavedAction.cancel) return false;
     if (result == _UnsavedAction.save) { await _flushSave(); return true; }
-    setState(() => _saveStatus = _SaveStatus.saved); // discard
+    setState(() => _saveStatus = _SaveStatus.saved);
     return true;
   }
 
@@ -223,7 +220,6 @@ class _PresentationScreenState extends State<PresentationScreen> {
       ),
     );
     if (confirm != true) return;
-    // Remove from memory and delete the file
     await _service.deleteDeck(deck.id);
     setState(() {
       _decks.remove(deck);
@@ -232,7 +228,6 @@ class _PresentationScreenState extends State<PresentationScreen> {
         _selectedSlide = null;
       }
     });
-    // No need to mark dirty — the file is already deleted
     setState(() => _saveStatus = _SaveStatus.saved);
   }
 
@@ -282,7 +277,6 @@ class _PresentationScreenState extends State<PresentationScreen> {
     );
     if (updated == null || !mounted) return;
 
-    // Apply all updated fields to the live deck object
     final idx = _decks.indexWhere((d) => d.id == deck.id);
     setState(() {
       deck.name           = updated.name;
@@ -295,7 +289,6 @@ class _PresentationScreenState extends State<PresentationScreen> {
       deck.isTemplate     = updated.isTemplate;
       deck.lastModifiedAt = updated.lastModifiedAt;
       if (idx >= 0) _decks[idx] = deck;
-      // If the open deck was edited, reflect in _openDeck reference
       if (_openDeck?.id == deck.id) _openDeck = deck;
     });
     await _flushSave();
@@ -306,15 +299,13 @@ class _PresentationScreenState extends State<PresentationScreen> {
 
   Future<void> _exportDeck(Deck deck) async {
     try {
-      // Ask user where to save
       final outputFile = await FilePicker.platform.saveFile(
-        dialogTitle:   'Export "${deck.name}"',
-        fileName:      '${Deck.safeFileName(deck.name)}.cpres',
+        dialogTitle:       'Export "${deck.name}"',
+        fileName:          '${Deck.safeFileName(deck.name)}.cpres',
         allowedExtensions: ['cpres'],
-        type:          FileType.custom,
+        type:              FileType.custom,
       );
       if (outputFile == null || !mounted) return;
-
       await _service.exportDeck(deck, outputFile);
       _showSnack('Exported to $outputFile', Colors.green.shade700,
           duration: const Duration(seconds: 5));
@@ -337,7 +328,6 @@ class _PresentationScreenState extends State<PresentationScreen> {
 
       final imported = await _service.importDeck(path);
       setState(() {
-        // Avoid duplicates — replace if same id already exists
         _decks.removeWhere((d) => d.id == imported.id);
         _decks.insert(0, imported);
       });
@@ -597,6 +587,7 @@ class _PresentationScreenState extends State<PresentationScreen> {
     final secondary = state.brandSecondary;
     final profile   = state.churchProfile;
 
+    // Layer 3 — full-screen present mode (owns its own Scaffold)
     if (_presenting && _openDeck != null) {
       return PresentView(
         deck:           _openDeck!,
@@ -614,6 +605,7 @@ class _PresentationScreenState extends State<PresentationScreen> {
       appBar: AppBar(
         backgroundColor: primary,
         foregroundColor: contrastOn(primary),
+        // Back arrow only shown when inside a deck
         leading: _openDeck != null
             ? IconButton(
                 icon:    const Icon(Icons.arrow_back),
@@ -638,10 +630,12 @@ class _PresentationScreenState extends State<PresentationScreen> {
               const SizedBox(width: 10),
             ],
             if (_openDeck != null)
+              // Tapping the deck name opens the rename prompt
               Flexible(
                 child: GestureDetector(
                   onTap: () async {
-                    final newName = await _promptName(context, _openDeck!.name);
+                    final newName =
+                        await _promptName(context, _openDeck!.name);
                     if (newName != null && newName != _openDeck!.name) {
                       setState(() => _openDeck!.name = newName);
                       _markDirty();
@@ -652,13 +646,15 @@ class _PresentationScreenState extends State<PresentationScreen> {
                     children: [
                       Flexible(
                         child: Text(_openDeck!.name,
-                            style: const TextStyle(fontWeight: FontWeight.bold),
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold),
                             overflow: TextOverflow.ellipsis),
                       ),
                       const SizedBox(width: 6),
                       Icon(Icons.edit_rounded,
                           size: 15,
-                          color: contrastOn(primary).withValues(alpha: 0.55)),
+                          color: contrastOn(primary)
+                              .withValues(alpha: 0.55)),
                     ],
                   ),
                 ),
@@ -669,16 +665,17 @@ class _PresentationScreenState extends State<PresentationScreen> {
           ],
         ),
         actions: [
-          // Save status indicator (only when editing a deck)
+          // ── Save indicator (deck editor only) ──────────────────────────
           if (_openDeck != null)
             _SaveIndicator(
               status:    _saveStatus,
               lastSaved: _lastSaved,
               primary:   primary,
-              onSave:    _saveStatus == _SaveStatus.unsaved ? _flushSave : null,
+              onSave:
+                  _saveStatus == _SaveStatus.unsaved ? _flushSave : null,
             ),
 
-          // Properties button for the open deck
+          // ── Properties button (deck editor only) ───────────────────────
           if (_openDeck != null)
             IconButton(
               icon:    const Icon(Icons.info_outline_rounded),
@@ -687,6 +684,7 @@ class _PresentationScreenState extends State<PresentationScreen> {
               onPressed: () => _showProperties(_openDeck!),
             ),
 
+          // ── Live badges ────────────────────────────────────────────────
           if (_isRecording)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 4),
@@ -697,6 +695,8 @@ class _PresentationScreenState extends State<PresentationScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 4),
               child: LiveBadge(label: 'LIVE', color: Colors.green),
             ),
+
+          // ── Present button (deck editor only) ──────────────────────────
           if (_openDeck != null)
             TextButton.icon(
               onPressed: () => setState(() => _presenting = true),
@@ -704,6 +704,8 @@ class _PresentationScreenState extends State<PresentationScreen> {
               label: Text('Present',
                   style: TextStyle(color: contrastOn(primary))),
             ),
+
+          // ── New deck FAB-equivalent in app bar (home only) ─────────────
           if (_openDeck == null)
             IconButton(
               icon:    const Icon(Icons.add),
@@ -712,6 +714,8 @@ class _PresentationScreenState extends State<PresentationScreen> {
             ),
         ],
       ),
+
+      // ── Body: home page OR deck editor ────────────────────────────────────
       body: _openDeck == null
           ? PresentationsHome(
               decks:           _decks,
@@ -789,9 +793,13 @@ class _SaveIndicator extends StatelessWidget {
     };
 
     return Tooltip(
-      message: isSaving   ? 'Saving…'
-              : isUnsaved  ? 'Tap to save now'
-              : lastSaved != null ? 'Last saved ${_timeAgo(lastSaved!)}' : 'Saved',
+      message: isSaving
+          ? 'Saving…'
+          : isUnsaved
+              ? 'Tap to save now'
+              : lastSaved != null
+                  ? 'Last saved ${_timeAgo(lastSaved!)}'
+                  : 'Saved',
       child: InkWell(
         borderRadius: BorderRadius.circular(8),
         onTap: onSave,
@@ -801,7 +809,9 @@ class _SaveIndicator extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               if (isSaving)
-                SizedBox(width: 14, height: 14,
+                SizedBox(
+                    width: 14,
+                    height: 14,
                     child: CircularProgressIndicator(
                         strokeWidth: 2,
                         color: fg.withValues(alpha: 0.70)))
@@ -812,31 +822,35 @@ class _SaveIndicator extends StatelessWidget {
                     _SaveStatus.saving  => Icons.cloud_upload_rounded,
                     _SaveStatus.unsaved => Icons.cloud_off_rounded,
                   },
-                  size: 16, color: iconColor,
+                  size: 16,
+                  color: iconColor,
                 ),
               const SizedBox(width: 5),
               Text(label,
                   style: TextStyle(
-                      fontSize:   11,
-                      color:      isUnsaved
+                      fontSize: 11,
+                      color: isUnsaved
                           ? Colors.orangeAccent
                           : fg.withValues(alpha: 0.80),
                       fontWeight: isUnsaved
-                          ? FontWeight.bold : FontWeight.normal)),
+                          ? FontWeight.bold
+                          : FontWeight.normal)),
               if (isUnsaved) ...[
                 const SizedBox(width: 6),
                 Container(
                   padding: const EdgeInsets.symmetric(
                       horizontal: 7, vertical: 2),
                   decoration: BoxDecoration(
-                    color:        Colors.orangeAccent.withValues(alpha: 0.20),
+                    color: Colors.orangeAccent.withValues(alpha: 0.20),
                     borderRadius: BorderRadius.circular(5),
                     border: Border.all(
-                        color: Colors.orangeAccent.withValues(alpha: 0.55)),
+                        color:
+                            Colors.orangeAccent.withValues(alpha: 0.55)),
                   ),
                   child: const Text('Save now',
                       style: TextStyle(
-                          fontSize: 9, color: Colors.orangeAccent,
+                          fontSize: 9,
+                          color: Colors.orangeAccent,
                           fontWeight: FontWeight.bold)),
                 ),
               ],
@@ -868,8 +882,9 @@ class _UnsavedChangesDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      icon:  const Icon(Icons.warning_amber_rounded,
+      shape:
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      icon: const Icon(Icons.warning_amber_rounded,
           color: Colors.orange, size: 40),
       title: const Text('Unsaved Changes',
           textAlign: TextAlign.center,
@@ -885,37 +900,43 @@ class _UnsavedChangesDialog extends StatelessWidget {
         Row(children: [
           Expanded(
             child: OutlinedButton.icon(
-              onPressed: () => Navigator.pop(context, _UnsavedAction.discard),
-              icon:  const Icon(Icons.delete_outline_rounded,
+              onPressed: () =>
+                  Navigator.pop(context, _UnsavedAction.discard),
+              icon: const Icon(Icons.delete_outline_rounded,
                   color: Colors.red, size: 16),
               label: const Text('Discard',
                   style: TextStyle(color: Colors.red)),
               style: OutlinedButton.styleFrom(
-                side:    const BorderSide(color: Colors.red),
-                padding: const EdgeInsets.symmetric(vertical: 12),
+                side: const BorderSide(color: Colors.red),
+                padding:
+                    const EdgeInsets.symmetric(vertical: 12),
               ),
             ),
           ),
           const SizedBox(width: 8),
           Expanded(
             child: OutlinedButton(
-              onPressed: () => Navigator.pop(context, _UnsavedAction.cancel),
+              onPressed: () =>
+                  Navigator.pop(context, _UnsavedAction.cancel),
               style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 12)),
+                  padding:
+                      const EdgeInsets.symmetric(vertical: 12)),
               child: const Text('Stay here'),
             ),
           ),
           const SizedBox(width: 8),
           Expanded(
             child: ElevatedButton.icon(
-              onPressed: () => Navigator.pop(context, _UnsavedAction.save),
-              icon:  const Icon(Icons.save_rounded, size: 16),
+              onPressed: () =>
+                  Navigator.pop(context, _UnsavedAction.save),
+              icon: const Icon(Icons.save_rounded, size: 16),
               label: const Text('Save & Go',
                   style: TextStyle(fontWeight: FontWeight.bold)),
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.green,
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 12),
+                padding:
+                    const EdgeInsets.symmetric(vertical: 12),
               ),
             ),
           ),

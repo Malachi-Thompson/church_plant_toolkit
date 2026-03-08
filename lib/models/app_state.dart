@@ -16,6 +16,13 @@ class AppState extends ChangeNotifier {
   // BibleService is owned here so it's always in sync with the profile
   final BibleService bibleService = BibleService();
 
+  // ── Presentation decks cached as raw JSON so AppState has no dependency
+  //    on the Slide/Deck types defined in presentation_screen.dart.
+  //    The presentation screen reads/writes this via presentationDecksJson
+  //    and savePresentationDecksJson().
+  String _presentationDecksJson = '[]';
+  String get presentationDecksJson => _presentationDecksJson;
+
   ChurchProfile? get churchProfile  => _churchProfile;
   bool get isSetupComplete          => _isSetupComplete;
   bool get isLoading                => _isLoading;
@@ -37,12 +44,26 @@ class AppState extends ChangeNotifier {
     final profileJson = prefs.getString('church_profile');
     if (profileJson != null) {
       _churchProfile = ChurchProfile.fromJson(jsonDecode(profileJson));
-      // Sync bible service with stored translation preference
       await bibleService.setTranslation(_churchProfile!.bibleTranslationId);
     }
+
+    // Load presentation decks raw JSON into memory cache
+    _presentationDecksJson =
+        prefs.getString('presentation_decks') ?? '[]';
+
     _isLoading = false;
     notifyListeners();
   }
+
+  // ── PRESENTATION DECK PERSISTENCE ────────────────────────────────────────
+  // Called by PresentationScreen whenever decks change.
+  Future<void> savePresentationDecksJson(String json) async {
+    _presentationDecksJson = json;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('presentation_decks', json);
+  }
+
+  // ── CHURCH PROFILE ────────────────────────────────────────────────────────
 
   Future<void> saveChurchProfile(ChurchProfile profile) async {
     final prefs = await SharedPreferences.getInstance();
@@ -50,12 +71,10 @@ class AppState extends ChangeNotifier {
     await prefs.setString('church_profile', jsonEncode(profile.toJson()));
     await prefs.setBool('setup_complete', true);
     _isSetupComplete = true;
-    // Keep BibleService in sync
     await bibleService.setTranslation(profile.bibleTranslationId);
     notifyListeners();
   }
 
-  /// Updates ONLY the translation preference without changing anything else.
   Future<void> updateBibleTranslation(String translationId) async {
     if (_churchProfile == null) return;
     final updated = _churchProfile!.copyWith(
@@ -103,70 +122,28 @@ class AppState extends ChangeNotifier {
     }
     final prefs = await SharedPreferences.getInstance();
     await prefs.clear();
-    _churchProfile   = null;
-    _isSetupComplete = false;
+    _churchProfile           = null;
+    _isSetupComplete         = false;
+    _presentationDecksJson   = '[]';
     notifyListeners();
   }
 }
 
 ThemeData buildChurchTheme(Color primary, Color secondary) {
   final onPrimary = primary.computeLuminance() > 0.4
-      ? Colors.black87 : Colors.white;
-
+      ? Colors.black
+      : Colors.white;
   return ThemeData(
-    useMaterial3: true,
     colorScheme: ColorScheme.fromSeed(
       seedColor: primary,
-      primary: primary,
+      primary:   primary,
       secondary: secondary,
-      surface: const Color(0xFFF5F7FA),
     ),
-    scaffoldBackgroundColor: const Color(0xFFF5F7FA),
     appBarTheme: AppBarTheme(
-      backgroundColor: primary, foregroundColor: onPrimary, elevation: 0),
-    elevatedButtonTheme: ElevatedButtonThemeData(
-      style: ElevatedButton.styleFrom(
-        backgroundColor: primary, foregroundColor: onPrimary,
-        padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10)),
-        textStyle: const TextStyle(
-            fontSize: 16, fontWeight: FontWeight.w600),
-      ),
+      backgroundColor: primary,
+      foregroundColor: onPrimary,
+      elevation: 0,
     ),
-    inputDecorationTheme: InputDecorationTheme(
-      filled: true, fillColor: Colors.white,
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(10),
-        borderSide: const BorderSide(color: Color(0xFFDDE1EC)),
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(10),
-        borderSide: const BorderSide(color: Color(0xFFDDE1EC)),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(10),
-        borderSide: BorderSide(color: primary, width: 2),
-      ),
-      contentPadding: const EdgeInsets.symmetric(
-          horizontal: 16, vertical: 14),
-    ),
-    cardTheme: CardThemeData(
-      color: Colors.white, elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: const BorderSide(color: Color(0xFFEAEDF3), width: 1),
-      ),
-    ),
-    checkboxTheme: CheckboxThemeData(
-      fillColor: WidgetStateProperty.resolveWith((s) =>
-          s.contains(WidgetState.selected) ? primary : null),
-    ),
-    switchTheme: SwitchThemeData(
-      trackColor: WidgetStateProperty.resolveWith((s) =>
-          s.contains(WidgetState.selected)
-              ? primary : Colors.grey.shade300),
-      thumbColor: WidgetStateProperty.all(Colors.white),
-    ),
+    useMaterial3: true,
   );
 }
