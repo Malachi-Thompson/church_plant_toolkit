@@ -23,6 +23,8 @@ class SlideEditorView extends StatefulWidget {
   final VoidCallback onChanged;
   /// Called when user taps "Reset to master style". Null = hide the button.
   final VoidCallback? onResetToMaster;
+  /// Navigate back to the master style panel (deselects the current slide).
+  final VoidCallback? onOpenMasterStyle;
 
   const SlideEditorView({
     super.key,
@@ -31,6 +33,7 @@ class SlideEditorView extends StatefulWidget {
     required this.secondary,
     required this.onChanged,
     this.onResetToMaster,
+    this.onOpenMasterStyle,
   });
 
   @override
@@ -121,6 +124,27 @@ class _SlideEditorViewState extends State<SlideEditorView>
                       borderRadius: BorderRadius.circular(2)),
                 ),
               ),
+              // Master Style nav button (mobile)
+              if (widget.onOpenMasterStyle != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: widget.onOpenMasterStyle,
+                      icon: Icon(Icons.palette_rounded,
+                          size: 15, color: widget.primary),
+                      label: Text('Master Style',
+                          style: TextStyle(color: widget.primary)),
+                      style: TextButton.styleFrom(
+                        textStyle: const TextStyle(
+                            fontSize: 12, fontWeight: FontWeight.w600),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                      ),
+                    ),
+                  ),
+                ),
               // Tab bar
               TabBar(
                 controller: _tabs,
@@ -214,6 +238,26 @@ class _SlideEditorViewState extends State<SlideEditorView>
 
           return Column(
             children: [
+              // -- Master Style nav button
+              if (widget.onOpenMasterStyle != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: widget.onOpenMasterStyle,
+                      icon: const Icon(Icons.palette_rounded, size: 15),
+                      label: const Text('Master Style'),
+                      style: TextButton.styleFrom(
+                        foregroundColor: p,
+                        textStyle: const TextStyle(
+                            fontSize: 12, fontWeight: FontWeight.w600),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 5),
+                      ),
+                    ),
+                  ),
+                ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(24, 20, 24, 12),
                 child: Center(

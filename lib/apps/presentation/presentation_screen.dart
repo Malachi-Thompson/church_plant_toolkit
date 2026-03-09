@@ -437,7 +437,11 @@ class PresentationScreen extends StatelessWidget {
                   ps.closeOpenDeck();
                 },
               )
-            : null,
+            : IconButton(
+                icon:    const Icon(Icons.arrow_back),
+                tooltip: 'Back',
+                onPressed: () => Navigator.maybePop(context),
+              ),
         title: titleWidget,
         actions: actions,
       ),

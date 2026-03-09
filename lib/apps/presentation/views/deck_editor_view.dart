@@ -34,6 +34,7 @@ class DeckEditorView extends StatelessWidget {
   final void Function(String, int, int)         onReorderCollectionSlide;
   final void Function(DeckMasterStyle)          onApplyMasterStyle;
   final VoidCallback?                           onResetSlideToMaster;
+  final VoidCallback?                           onOpenMasterStyle;
 
   const DeckEditorView({
     super.key,
@@ -59,6 +60,7 @@ class DeckEditorView extends StatelessWidget {
     required this.onReorderCollectionSlide,
     required this.onApplyMasterStyle,
     this.onResetSlideToMaster,
+    this.onOpenMasterStyle,
   });
 
   @override
@@ -81,6 +83,7 @@ class DeckEditorView extends StatelessWidget {
         onReorderCollectionSlide: onReorderCollectionSlide,
         onApplyMasterStyle: onApplyMasterStyle,
         onResetSlideToMaster: onResetSlideToMaster,
+        onOpenMasterStyle: onOpenMasterStyle,
       );
     }
     return _MobileLayout(
@@ -98,6 +101,7 @@ class DeckEditorView extends StatelessWidget {
       onReorderCollectionSlide: onReorderCollectionSlide,
       onApplyMasterStyle: onApplyMasterStyle,
       onResetSlideToMaster: onResetSlideToMaster,
+      onOpenMasterStyle: onOpenMasterStyle,
     );
   }
 }
@@ -122,6 +126,7 @@ class _WideLayout extends StatelessWidget {
   final void Function(String,int,int) onReorderCollectionSlide;
   final void Function(DeckMasterStyle) onApplyMasterStyle;
   final VoidCallback? onResetSlideToMaster;
+  final VoidCallback? onOpenMasterStyle;
 
   const _WideLayout({
     required this.deck, required this.selectedSlide,
@@ -134,7 +139,7 @@ class _WideLayout extends StatelessWidget {
     required this.onRemoveSlideFromGroup, required this.onImportCollection,
     required this.onToggleCollection, required this.onMoveCollection,
     required this.onRemoveCollection, required this.onReorderCollectionSlide,
-    required this.onApplyMasterStyle, this.onResetSlideToMaster,
+    required this.onApplyMasterStyle, this.onResetSlideToMaster, this.onOpenMasterStyle,
   });
 
   @override
@@ -159,6 +164,7 @@ class _WideLayout extends StatelessWidget {
             onRemoveCollection: onRemoveCollection,
             onReorderCollectionSlide: onReorderCollectionSlide,
             importContext: context,
+            onOpenMasterStyle: onOpenMasterStyle,
           ),
         ),
         const VerticalDivider(width: 1),
@@ -203,6 +209,7 @@ class _MobileLayout extends StatefulWidget {
   final void Function(String,int,int) onReorderCollectionSlide;
   final void Function(DeckMasterStyle) onApplyMasterStyle;
   final VoidCallback? onResetSlideToMaster;
+  final VoidCallback? onOpenMasterStyle;
 
   const _MobileLayout({
     required this.deck, required this.selectedSlide,
@@ -215,7 +222,7 @@ class _MobileLayout extends StatefulWidget {
     required this.onRemoveSlideFromGroup, required this.onImportCollection,
     required this.onToggleCollection, required this.onMoveCollection,
     required this.onRemoveCollection, required this.onReorderCollectionSlide,
-    required this.onApplyMasterStyle, this.onResetSlideToMaster,
+    required this.onApplyMasterStyle, this.onResetSlideToMaster, this.onOpenMasterStyle,
   });
 
   @override
@@ -304,6 +311,7 @@ class _MobileLayoutState extends State<_MobileLayout> {
                   onRemoveCollection: widget.onRemoveCollection,
                   onReorderCollectionSlide: widget.onReorderCollectionSlide,
                   importContext: context,
+                  onOpenMasterStyle: widget.onOpenMasterStyle,
                 ),
               ),
             ],
@@ -419,6 +427,7 @@ class _SlideListPanel extends StatelessWidget {
   final ValueChanged<String>            onRemoveCollection;
   final void Function(String, int, int) onReorderCollectionSlide;
   final BuildContext                    importContext;
+  final VoidCallback?                   onOpenMasterStyle;
 
   const _SlideListPanel({
     required this.deck,
@@ -441,6 +450,7 @@ class _SlideListPanel extends StatelessWidget {
     required this.onRemoveCollection,
     required this.onReorderCollectionSlide,
     required this.importContext,
+    this.onOpenMasterStyle,
   });
 
   Future<void> _openSongImport() async {
@@ -466,6 +476,18 @@ class _SlideListPanel extends StatelessWidget {
 
     return Column(
       children: [
+        // -- Master Style button
+        if (onOpenMasterStyle != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+            child: _ActionButton(
+              icon: Icons.palette_rounded,
+              label: 'Master Style',
+              primary: primary,
+              filled: true,
+              onPressed: onOpenMasterStyle,
+            ),
+          ),
         // ── Action buttons ─────────────────────────────────────────────────
         Padding(
           padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
@@ -1012,24 +1034,27 @@ class _ActionButton extends StatelessWidget {
   Widget build(BuildContext context) => SizedBox(
         width: double.infinity,
         child: filled
-            ? Container(
-                padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
-                decoration: BoxDecoration(
-                  color: primary.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: primary.withValues(alpha: 0.28)),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(icon, color: primary, size: 18),
-                    const SizedBox(width: 6),
-                    Text(label,
-                        style: TextStyle(
-                            color: primary,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 13)),
-                  ],
+            ? GestureDetector(
+                onTap: onPressed,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
+                  decoration: BoxDecoration(
+                    color: primary.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: primary.withValues(alpha: 0.28)),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(icon, color: primary, size: 18),
+                      const SizedBox(width: 6),
+                      Text(label,
+                          style: TextStyle(
+                              color: primary,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13)),
+                    ],
+                  ),
                 ),
               )
             : OutlinedButton.icon(
