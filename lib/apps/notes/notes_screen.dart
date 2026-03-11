@@ -24,7 +24,7 @@ import '../../models/app_state.dart';
 import '../../screens/dashboard_screen.dart';
 import '../../theme.dart';
 import 'note_constants.dart';
-import 'note_exporter.dart';
+import 'note_exporter.dart' show exportDocx, exportOdt, exportHtmlForPdf, extractTextFromDocxBytes, extractHtmlFromDocxBytes;
 import 'note_model.dart';
 import 'widgets/folder_tree.dart';
 import 'widgets/note_editor.dart';
@@ -172,7 +172,7 @@ class _NotesScreenState extends State<NotesScreen> {
   Future<void> _importFile() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['txt', 'md', 'docx', 'pdf'],
+      allowedExtensions: ['txt', 'md', 'docx', 'odt', 'pdf'],
       dialogTitle: 'Import Note File',
       withData: true,
     );
@@ -195,10 +195,13 @@ class _NotesScreenState extends State<NotesScreen> {
     if (ext == 'txt' || ext == 'md') {
       content = utf8.decode(bytes);
     } else if (ext == 'docx') {
-      content = extractTextFromDocxBytes(bytes) ??
+      // Extract as rich HTML to preserve formatting in the WebView editor.
+      content = extractHtmlFromDocxBytes(bytes) ??
+          extractTextFromDocxBytes(bytes) ??
           '[Could not extract text from .docx — paste your content here.]';
     }
-    // PDF: content stays empty; bytes are stored for opening in system viewer
+    // ODT: content stays empty initially; the WebView editor starts blank.
+    // PDF: content stays empty; bytes stored for inline viewer.
 
     final now  = DateTime.now();
     final note = NoteModel(
@@ -214,6 +217,7 @@ class _NotesScreenState extends State<NotesScreen> {
       sourceFilePath:  file.path,
       sourceFileType:  ext,
       sourceFileBytes: bytes,
+      exportFormat:    ext == 'odt' ? 'odt' : 'docx',
       createdAt:       now,
       updatedAt:       now,
     );
@@ -229,19 +233,23 @@ class _NotesScreenState extends State<NotesScreen> {
 
   // ── EXPORT ────────────────────────────────────────────────────────────────
 
-  Future<void> _exportNote(NoteModel note, {required bool pdf}) async {
+  Future<void> _exportNote(NoteModel note, {required String format}) async {
     final messenger = ScaffoldMessenger.of(context);
     messenger.showSnackBar(const SnackBar(
         content: Text('Exporting…'),
         behavior: SnackBarBehavior.floating));
 
+    // For rich-HTML content (docx/odt imported notes) we export the stored
+    // HTML directly; for plain-text notes we use the content as-is.
     final payload = {
       ...note.toJson(),
       'translation': note.translation ??
           context.read<AppState>().bibleService.translationId,
     };
     final safe = note.title.replaceAll(RegExp(r'[^\w\s]'), '').trim();
-    final ext  = pdf ? 'pdf' : 'docx';
+    final isPdf = format == 'pdf';
+    final isOdt = format == 'odt';
+    final ext   = isPdf ? 'pdf' : isOdt ? 'odt' : 'docx';
 
     try {
       final bool isMobile =
@@ -250,8 +258,14 @@ class _NotesScreenState extends State<NotesScreen> {
       if (isMobile) {
         final tmpDir  = await getTemporaryDirectory();
         final outPath = '${tmpDir.path}/${safe}_note.$ext';
-        if (pdf) {
+        if (isPdf) {
           await exportHtmlForPdf(payload);
+        } else if (isOdt) {
+          await exportOdt(payload, outPath);
+          final uri = Uri.file(outPath);
+          if (await canLaunchUrl(uri)) {
+            await launchUrl(uri, mode: LaunchMode.externalApplication);
+          }
         } else {
           await exportDocx(payload, outPath);
           final uri = Uri.file(outPath);
@@ -261,15 +275,17 @@ class _NotesScreenState extends State<NotesScreen> {
         }
       } else {
         final outPath = await FilePicker.platform.saveFile(
-          dialogTitle:       'Save ${pdf ? 'PDF' : 'Word'} File',
+          dialogTitle:       'Save ${isPdf ? 'PDF' : isOdt ? 'ODT' : 'Word'} File',
           fileName:          '${safe}_note.$ext',
           allowedExtensions: [ext],
           type: FileType.custom,
         );
         if (outPath == null) return;
 
-        if (pdf) {
+        if (isPdf) {
           await exportHtmlForPdf(payload);
+        } else if (isOdt) {
+          await exportOdt(payload, outPath);
         } else {
           await exportDocx(payload, outPath);
         }
@@ -291,7 +307,7 @@ class _NotesScreenState extends State<NotesScreen> {
 
       if (!mounted) return;
       messenger.showSnackBar(SnackBar(
-        content: Text(pdf
+        content: Text(isPdf
             ? 'Print page opened — use File → Print → Save as PDF'
             : 'File exported successfully'),
         behavior: SnackBarBehavior.floating,
@@ -303,6 +319,36 @@ class _NotesScreenState extends State<NotesScreen> {
         backgroundColor: Colors.red,
         behavior: SnackBarBehavior.floating,
       ));
+    }
+  }
+
+  // ── SAVE BACK TO SOURCE FILE ──────────────────────────────────────────────
+  //
+  // Writes the note's current content back to the original imported file.
+  // Supported for txt, md, and docx.  PDFs are never written back.
+
+  Future<void> _saveBack(NoteModel note) async {
+    final path = note.sourceFilePath;
+    final ext  = note.sourceFileType;
+    if (path == null || ext == null || ext == 'pdf') return;
+
+    if (ext == 'txt' || ext == 'md') {
+      await File(path).writeAsString(note.content, flush: true);
+    } else if (ext == 'docx') {
+      // Re-export note content as a fresh .docx into the original path.
+      final payload = {
+        ...note.toJson(),
+        'translation': note.translation ??
+            context.read<AppState>().bibleService.translationId,
+      };
+      await exportDocx(payload, path);
+    } else if (ext == 'odt') {
+      final payload = {
+        ...note.toJson(),
+        'translation': note.translation ??
+            context.read<AppState>().bibleService.translationId,
+      };
+      await exportOdt(payload, path);
     }
   }
 
@@ -419,7 +465,7 @@ class _NotesScreenState extends State<NotesScreen> {
                 onArchive:     _archiveNote,
                 onUnarchive:   _unarchiveNote,
                 onDelete:      _deleteNote,
-                onExport:      (n, pdf) => _exportNote(n, pdf: pdf),
+                onExport:      (n, fmt) => _exportNote(n, format: fmt),
                 onNew:         _createNote,
               ),
             ),
@@ -436,8 +482,9 @@ class _NotesScreenState extends State<NotesScreen> {
                       onChanged:    () => _update(() =>
                           _selectedNote!.updatedAt = DateTime.now()),
                       onArchive:    () => _archiveNote(_selectedNote!),
-                      onExport:     (pdf) =>
-                          _exportNote(_selectedNote!, pdf: pdf),
+                      onExport:     (fmt) =>
+                          _exportNote(_selectedNote!, format: fmt),
+                      onSaveBack:   _saveBack,
                     )
                   : EmptyEditor(primary: primary),
             ),
@@ -609,7 +656,7 @@ class _NotesScreenState extends State<NotesScreen> {
               onArchive:   _archiveNote,
               onUnarchive: _unarchiveNote,
               onDelete:    _deleteNote,
-              onExport:    (n, pdf) => _exportNote(n, pdf: pdf),
+              onExport:    (n, fmt) => _exportNote(n, format: fmt),
               onNew: () {
                 _createNote();
                 setState(() => _mobilePane = _MobilePane.editor);
@@ -632,7 +679,8 @@ class _NotesScreenState extends State<NotesScreen> {
             _archiveNote(_selectedNote!);
             setState(() => _mobilePane = _MobilePane.list);
           },
-          onExport: (pdf) => _exportNote(_selectedNote!, pdf: pdf),
+          onExport:   (fmt) => _exportNote(_selectedNote!, format: fmt),
+          onSaveBack: _saveBack,
         );
     }
   }

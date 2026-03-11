@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../../theme.dart';
 import '../bulletin_model.dart';
+import 'bulletin_preview.dart';
 
 class BulletinEditor extends StatefulWidget {
   final BulletinModel      bulletin;
@@ -39,7 +40,7 @@ class _BulletinEditorState extends State<BulletinEditor>
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 5, vsync: this);
+    _tabs = TabController(length: 6, vsync: this);
   }
 
   @override
@@ -107,6 +108,13 @@ class _BulletinEditorState extends State<BulletinEditor>
               Tab(text: 'Announcements'),
               Tab(text: 'Prayer & Notes'),
               Tab(text: 'Options'),
+              Tab(
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Icons.visibility_outlined, size: 13),
+                  SizedBox(width: 5),
+                  Text('Preview'),
+                ]),
+              ),
             ],
           ),
         ]),
@@ -121,6 +129,7 @@ class _BulletinEditorState extends State<BulletinEditor>
             _AnnouncementsTab(b: b, primary: primary, onChanged: _changed),
             _PrayerNotesTab(b: b, primary: primary, onChanged: _changed),
             _OptionsTab(b: b, primary: primary, secondary: secondary, onChanged: _changed),
+            BulletinPreview(bulletin: b, primary: primary),
           ],
         ),
       ),

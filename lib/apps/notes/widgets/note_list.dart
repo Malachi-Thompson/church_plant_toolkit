@@ -20,7 +20,7 @@ class NoteList extends StatelessWidget {
   final ValueChanged<NoteModel> onArchive;
   final ValueChanged<NoteModel> onUnarchive;
   final ValueChanged<NoteModel> onDelete;
-  final void Function(NoteModel, bool) onExport; // bool = isPdf
+  final void Function(NoteModel, String) onExport; // format: 'docx'|'odt'|'pdf'
   final VoidCallback            onNew;
 
   const NoteList({
@@ -84,8 +84,9 @@ class NoteList extends StatelessWidget {
                     onArchive:   () => onArchive(notes[i]),
                     onUnarchive: () => onUnarchive(notes[i]),
                     onDelete:    () => onDelete(notes[i]),
-                    onExportDocx: () => onExport(notes[i], false),
-                    onExportPdf:  () => onExport(notes[i], true),
+                    onExportDocx: () => onExport(notes[i], 'docx'),
+                    onExportOdt:  () => onExport(notes[i], 'odt'),
+                    onExportPdf:  () => onExport(notes[i], 'pdf'),
                   ),
                 ),
         ),
@@ -114,7 +115,7 @@ class _NoteListTile extends StatelessWidget {
   final Color      primary;
   final Color      secondary;
   final VoidCallback onTap, onArchive, onUnarchive, onDelete;
-  final VoidCallback onExportDocx, onExportPdf;
+  final VoidCallback onExportDocx, onExportOdt, onExportPdf;
 
   const _NoteListTile({
     required this.note,
@@ -126,6 +127,7 @@ class _NoteListTile extends StatelessWidget {
     required this.onUnarchive,
     required this.onDelete,
     required this.onExportDocx,
+    required this.onExportOdt,
     required this.onExportPdf,
   });
 
@@ -222,6 +224,9 @@ class _NoteListTile extends StatelessWidget {
         const PopupMenuItem(value: 'docx', child: Row(children: [
           Icon(Icons.description_outlined, size: 16),
           SizedBox(width: 8), Text('Export as Word')])),
+        const PopupMenuItem(value: 'odt', child: Row(children: [
+          Icon(Icons.description_outlined, size: 16),
+          SizedBox(width: 8), Text('Export as ODT')])),
         const PopupMenuItem(value: 'pdf', child: Row(children: [
           Icon(Icons.picture_as_pdf_outlined, size: 16),
           SizedBox(width: 8), Text('Export as PDF')])),
@@ -236,6 +241,7 @@ class _NoteListTile extends StatelessWidget {
     );
     switch (result) {
       case 'docx':    onExportDocx(); break;
+      case 'odt':     onExportOdt();  break;
       case 'pdf':     onExportPdf();  break;
       case 'archive': note.isArchived ? onUnarchive() : onArchive(); break;
       case 'delete':  onDelete(); break;

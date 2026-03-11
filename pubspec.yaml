@@ -27,6 +27,7 @@ dependencies:
   path: ^1.9.0
   webview_flutter: ^4.10.0
   webview_windows: ^0.4.0
+  syncfusion_flutter_pdfviewer: ^26.1.35
 
   # ── NEW: Recording & Streaming ──────────────────────────────────────────────
   #

@@ -46,6 +46,8 @@ class NoteModel {
   String?     sourceFileType;  // 'docx' | 'pdf' | 'txt' | 'md'
   Uint8List?  sourceFileBytes; // raw bytes (runtime only — not persisted)
   String?     translation;     // Bible translation used for this note
+  /// Preferred export format for this note: 'docx' (default) or 'odt'.
+  String      exportFormat;
   final DateTime createdAt;
   DateTime       updatedAt;
 
@@ -65,6 +67,7 @@ class NoteModel {
     this.sourceFileType,
     this.sourceFileBytes,
     this.translation,
+    this.exportFormat    = 'docx',
     required this.createdAt,
     required this.updatedAt,
   });
@@ -87,6 +90,7 @@ class NoteModel {
     'sourceFileType': sourceFileType,
     // sourceFileBytes intentionally omitted — too large to persist
     'translation':  translation,
+    'exportFormat': exportFormat,
     'createdAt':    createdAt.toIso8601String(),
     'updatedAt':    updatedAt.toIso8601String(),
   };
@@ -108,6 +112,7 @@ class NoteModel {
     sourceFilePath: j['sourceFilePath'],
     sourceFileType: j['sourceFileType'],
     translation: j['translation'],
+    exportFormat: j['exportFormat'] ?? 'docx',
     createdAt:   DateTime.parse(j['createdAt']),
     updatedAt:   DateTime.parse(j['updatedAt']),
   );
