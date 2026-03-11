@@ -1067,11 +1067,12 @@ class _AppCheckTile extends StatelessWidget {
   });
 
   static const _icons = {
-    'notes':        Icons.note_alt_outlined,
-    'bible':        Icons.menu_book_outlined,
-    'website':      Icons.web_outlined,
-    'presentation': Icons.present_to_all_outlined,
+    'notes':         Icons.note_alt_outlined,
+    'bible':         Icons.menu_book_outlined,
+    'website':       Icons.web_outlined,
+    'presentation':  Icons.present_to_all_outlined,
     'media_toolkit': Icons.palette_outlined,
+    'bulletin':      Icons.article_outlined,
   };
 
   @override

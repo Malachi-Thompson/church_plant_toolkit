@@ -206,7 +206,14 @@ const List<AppDefinition> availableApps = [
     description: 'Generate branded social media graphics, export your color palette, and convert images with your logo.',
     iconPath: 'palette',
     category: 'Branding',
-),
+  ),
+  AppDefinition(
+    id: 'bulletin',
+    title: 'Bulletin Maker',
+    description: 'Design and print weekly church bulletins with custom layouts, sermon notes, and announcements.',
+    iconPath: 'article',
+    category: 'Communication',
+  ),
 ];
 // ── CHURCH LOGO WIDGET ────────────────────────────────────────────────────────
 class ChurchLogo extends StatelessWidget {
