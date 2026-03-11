@@ -25,6 +25,7 @@ import 'website_models.dart';
 import 'website_templates.dart';
 import 'website_exporter.dart';
 import 'website_deploy_service.dart';
+import 'website_preview_panel.dart';
 
 const _uuid = Uuid();
 String _id() => _uuid.v4();
@@ -205,41 +206,15 @@ class _WebsiteScreenState extends State<WebsiteScreen> {
 
   // ── PREVIEW ──────────────────────────────────────────────────────────────────
 
-  Future<void> _openPreview() async {
+  void _openPreview() {
     if (_site == null || _activePage == null) return;
-    try {
-      final dir        = await getApplicationDocumentsDirectory();
-      final previewDir = Directory('${dir.path}/website_preview');
-      await previewDir.create(recursive: true);
-
-      await File('${previewDir.path}/style.css')
-          .writeAsString(generateCSS(_site!.settings));
-      for (final page in _site!.pages) {
-        final fname = page.isHomePage ? 'index.html' : '${page.slug}.html';
-        await File('${previewDir.path}/$fname')
-            .writeAsString(generatePageHtml(_site!, page));
-      }
-
-      final activeName = _activePage!.isHomePage
-          ? 'index.html' : '${_activePage!.slug}.html';
-      final uri = Uri.file('${previewDir.path}/$activeName');
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-              content: Text('Could not open browser preview'),
-              behavior: SnackBarBehavior.floating));
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('Preview error: $e'),
-            behavior: SnackBarBehavior.floating));
-      }
-    }
+    setState(() {
+      _previewMode   = true;
+      _selectedBlock = null; // close the property panel while previewing
+    });
   }
+
+  void _closePreview() => setState(() => _previewMode = false);
 
   // ── EXPORT (manual download) ─────────────────────────────────────────────────
 
@@ -350,27 +325,33 @@ class _WebsiteScreenState extends State<WebsiteScreen> {
           ),
           const VerticalDivider(width: 1, thickness: 1),
 
-          // ── CENTER: block canvas ────────────────────────────────────────
+          // ── CENTER: block canvas OR in-app preview ──────────────────────
           Expanded(
-            child: _activePage != null
-                ? _BlockCanvas(
-                    page:          _activePage!,
-                    site:          _site!,
-                    selectedBlock: _selectedBlock,
-                    primary:       primary,
-                    secondary:     secondary,
-                    onSelect:      (b) => setState(() => _selectedBlock = b),
-                    onDelete:      _deleteBlock,
-                    onReorder:     _moveBlock,
-                    onToggleVisibility: (b) => _update(() =>
-                        b.isVisible = !b.isVisible),
+            child: _previewMode && _activePage != null
+                ? WebsitePreviewPanel(
+                    site:        _site!,
+                    initialPage: _activePage!,
+                    primary:     primary,
                   )
-                : Center(child: Text('Select or create a page',
-                    style: TextStyle(color: primary.withValues(alpha: 0.4)))),
+                : _activePage != null
+                    ? _BlockCanvas(
+                        page:          _activePage!,
+                        site:          _site!,
+                        selectedBlock: _selectedBlock,
+                        primary:       primary,
+                        secondary:     secondary,
+                        onSelect:      (b) => setState(() => _selectedBlock = b),
+                        onDelete:      _deleteBlock,
+                        onReorder:     _moveBlock,
+                        onToggleVisibility: (b) => _update(() =>
+                            b.isVisible = !b.isVisible),
+                      )
+                    : Center(child: Text('Select or create a page',
+                        style: TextStyle(color: primary.withValues(alpha: 0.4)))),
           ),
 
           // ── RIGHT PANEL: property editor ────────────────────────────────
-          if (_selectedBlock != null) ...[
+          if (!_previewMode && _selectedBlock != null) ...[
             const VerticalDivider(width: 1, thickness: 1),
             SizedBox(
               width: 320,
@@ -418,11 +399,18 @@ class _WebsiteScreenState extends State<WebsiteScreen> {
         ],
       ]),
       actions: [
-        TextButton.icon(
-          onPressed: _openPreview,
-          icon: Icon(Icons.open_in_browser, color: contrastOn(primary), size: 18),
-          label: Text('Preview', style: TextStyle(color: contrastOn(primary))),
-        ),
+        if (_previewMode)
+          TextButton.icon(
+            onPressed: _closePreview,
+            icon: Icon(Icons.edit_outlined, color: contrastOn(primary), size: 18),
+            label: Text('Edit', style: TextStyle(color: contrastOn(primary))),
+          )
+        else
+          TextButton.icon(
+            onPressed: _openPreview,
+            icon: Icon(Icons.preview_outlined, color: contrastOn(primary), size: 18),
+            label: Text('Preview', style: TextStyle(color: contrastOn(primary))),
+          ),
         _exportBusy
             ? Padding(
                 padding: const EdgeInsets.all(16),

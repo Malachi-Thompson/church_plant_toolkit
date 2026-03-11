@@ -12,8 +12,8 @@ import 'screens/dashboard_screen.dart';
 import 'theme.dart';
 
 void main() {
-  // Must be called synchronously on the main isolate BEFORE runApp.
-  // Lazy init inside an async _open() can silently fail on Windows/macOS/Linux.
+  WidgetsFlutterBinding.ensureInitialized();
+
   if (!kIsWeb) {
     if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
       sqfliteFfiInit();
