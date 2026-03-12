@@ -13,6 +13,9 @@ import '../services/bible_service.dart';
 import 'setup_screen.dart';
 import '../apps/media_toolkit/media_toolkit_screen.dart';
 import '../apps/bulletin/bulletin_screen.dart';
+import '../apps/newsletter/newsletter_screen.dart';
+import '../apps/directory/directory_screen.dart';
+import 'admin_screen.dart';
 
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key});
@@ -26,6 +29,8 @@ class DashboardScreen extends StatelessWidget {
       case 'presentation':screen = const PresentationScreen(); break;
       case 'media_toolkit':screen = const MediaToolkitScreen(); break;
       case 'bulletin':     screen = const BulletinScreen(); break;
+      case 'newsletter':   screen = const NewsletterScreen(); break;
+      case 'directory':    screen = const DirectoryScreen(); break;
       default: return;
     }
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen));
@@ -116,6 +121,12 @@ class DashboardScreen extends StatelessWidget {
   }
 
   void _openSettings(BuildContext context, AppState state) {
+    if (state.isAdminLocked) {
+      // Tapping settings while locked → go straight to admin unlock
+      Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const AdminScreen()));
+      return;
+    }
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -135,6 +146,8 @@ class DashboardScreen extends StatelessWidget {
     final installed = availableApps
         .where((a) => profile.installedApps.contains(a.id))
         .toList();
+    final allInstalled = installed.length == availableApps.length;
+    final locked = state.isAdminLocked;
 
     return Scaffold(
       body: CustomScrollView(
@@ -161,21 +174,27 @@ class DashboardScreen extends StatelessWidget {
             sliver: SliverGrid(
               delegate: SliverChildBuilderDelegate(
                 (context, index) {
-                  if (index == installed.length) {
+                  // Show Add App card only if there are uninstalled apps
+                  // and settings are not locked
+                  if (!allInstalled && !locked && index == installed.length) {
                     return _AddAppCard(
                         color: primary,
                         onTap: () => _showAddAppDialog(context));
                   }
+                  if (index >= installed.length) return null;
                   final app = installed[index];
                   return _AppCard(
                     app: app,
                     primary:   primary,
                     secondary: secondary,
+                    locked:    locked,
                     onOpen:   () => _openApp(context, app.id),
                     onRemove: () => _removeApp(context, app.id, app.title),
                   );
                 },
-                childCount: installed.length + 1,
+                childCount: allInstalled || locked
+                    ? installed.length
+                    : installed.length + 1,
               ),
               gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
                 maxCrossAxisExtent: 360,
@@ -441,26 +460,43 @@ class _SettingsSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 12, 24, 32),
+    final maxHeight = MediaQuery.of(context).size.height * 0.85;
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: maxHeight),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Center(
-            child: Container(
-              width: 40, height: 4,
-              margin: const EdgeInsets.only(bottom: 20),
-              decoration: BoxDecoration(
-                  color: const Color(0xFFDDDDDD),
-                  borderRadius: BorderRadius.circular(2)),
+          // ── Fixed header (never scrolls) ───────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40, height: 4,
+                    margin: const EdgeInsets.only(bottom: 20),
+                    decoration: BoxDecoration(
+                        color: const Color(0xFFDDDDDD),
+                        borderRadius: BorderRadius.circular(2)),
+                  ),
+                ),
+                const Text('Settings',
+                    style: TextStyle(
+                        fontSize: 20, fontWeight: FontWeight.bold,
+                        color: textDark)),
+                const SizedBox(height: 20),
+              ],
             ),
           ),
-          const Text('Settings',
-              style: TextStyle(
-                  fontSize: 20, fontWeight: FontWeight.bold,
-                  color: textDark)),
-          const SizedBox(height: 20),
+          // ── Scrollable tiles ───────────────────────────────────────────
+          Flexible(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 32),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
           _SettingsTile(
             icon: Icons.edit_outlined,
             iconColor: state.brandPrimary,
@@ -474,6 +510,20 @@ class _SettingsSheet extends StatelessWidget {
           ),
           const Divider(height: 1),
           _BibleTranslationTile(state: state),
+          const Divider(height: 1),
+          _SettingsTile(
+            icon: Icons.admin_panel_settings_outlined,
+            iconColor: const Color(0xFF6A1B9A),
+            title: 'Admin & Master Account',
+            subtitle: state.hasAdminPin
+                ? 'Manage PIN, settings lock, export/import profile'
+                : 'Set up a PIN to protect church settings',
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const AdminScreen()));
+            },
+          ),
           const Divider(height: 1),
           _SettingsTile(
             icon: Icons.info_outline,
@@ -533,6 +583,10 @@ class _SettingsSheet extends StatelessWidget {
                 ),
               );
             },
+          ),
+                ],
+              ),
+            ),
           ),
         ],
       ),
@@ -660,6 +714,7 @@ class _AppCard extends StatelessWidget {
   final AppDefinition app;
   final Color primary;
   final Color secondary;
+  final bool  locked;
   final VoidCallback onOpen;
   final VoidCallback onRemove;
 
@@ -667,6 +722,7 @@ class _AppCard extends StatelessWidget {
     required this.app,
     required this.primary,
     required this.secondary,
+    required this.locked,
     required this.onOpen,
     required this.onRemove,
   });
@@ -678,6 +734,8 @@ class _AppCard extends StatelessWidget {
     'presentation':  Icons.present_to_all_rounded,
     'media_toolkit': Icons.perm_media_rounded,
     'bulletin':      Icons.article_rounded,
+    'newsletter':    Icons.newspaper_rounded,
+    'directory':     Icons.people_rounded,
   };
 
   @override
@@ -702,24 +760,25 @@ class _AppCard extends StatelessWidget {
                   child: Icon(icon, color: primary, size: 30),
                 ),
                 const Spacer(),
-                PopupMenuButton<String>(
-                  icon: Icon(Icons.more_vert,
-                      color: Colors.grey.shade400, size: 20),
-                  onSelected: (v) { if (v == 'remove') onRemove(); },
-                  itemBuilder: (ctx) => [
-                    const PopupMenuItem(
-                      value: 'remove',
-                      child: Row(
-                        children: [
-                          Icon(Icons.delete_outline, color: Colors.red, size: 18),
-                          SizedBox(width: 8),
-                          Text('Remove App',
-                              style: TextStyle(color: Colors.red)),
-                        ],
+                if (!locked)
+                  PopupMenuButton<String>(
+                    icon: Icon(Icons.more_vert,
+                        color: Colors.grey.shade400, size: 20),
+                    onSelected: (v) { if (v == 'remove') onRemove(); },
+                    itemBuilder: (ctx) => [
+                      const PopupMenuItem(
+                        value: 'remove',
+                        child: Row(
+                          children: [
+                            Icon(Icons.delete_outline, color: Colors.red, size: 18),
+                            SizedBox(width: 8),
+                            Text('Remove App',
+                                style: TextStyle(color: Colors.red)),
+                          ],
+                        ),
                       ),
-                    ),
-                  ],
-                ),
+                    ],
+                  ),
               ],
             ),
             const SizedBox(height: 16),

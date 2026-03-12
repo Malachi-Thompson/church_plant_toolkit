@@ -214,6 +214,20 @@ const List<AppDefinition> availableApps = [
     iconPath: 'article',
     category: 'Communication',
   ),
+  AppDefinition(
+    id: 'newsletter',
+    title: 'Newsletter Builder',
+    description: 'Compose church newsletters with announcements, sermon recaps, events, and scripture. Export as PDF or email-ready HTML.',
+    iconPath: 'newspaper',
+    category: 'Communication',
+  ),
+  AppDefinition(
+    id: 'directory',
+    title: 'Member Directory',
+    description: 'Track members, visitors, and families. Record contact info, baptism dates, join dates, and export a printable directory.',
+    iconPath: 'people',
+    category: 'Pastoral',
+  ),
 ];
 // ── CHURCH LOGO WIDGET ────────────────────────────────────────────────────────
 class ChurchLogo extends StatelessWidget {
