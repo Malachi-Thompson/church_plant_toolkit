@@ -429,7 +429,9 @@ class _SetupScreenState extends State<SetupScreen> {
 }
 
 // ── BIBLE TRANSLATION PICKER ──────────────────────────────────────────────────
-class _BibleTranslationPicker extends StatefulWidget {
+// Reads directly from BibleService so it always shows exactly the same
+// translations as the Bible Reader — no separate hardcoded list.
+class _BibleTranslationPicker extends StatelessWidget {
   final String selectedId;
   final Color primary;
   final ValueChanged<String> onChanged;
@@ -441,25 +443,15 @@ class _BibleTranslationPicker extends StatefulWidget {
   });
 
   @override
-  State<_BibleTranslationPicker> createState() =>
-      _BibleTranslationPickerState();
-}
-
-class _BibleTranslationPickerState extends State<_BibleTranslationPicker> {
-  // Popular free English translations with short descriptions
-  static const _popular = <Map<String, String>>[
-    {'id': 'BSB',   'name': 'Berean Standard Bible',      'desc': 'Modern, accurate, free to use'},
-    {'id': 'KJV',   'name': 'King James Version',          'desc': 'Traditional, public domain (1611)'},
-    {'id': 'WEB',   'name': 'World English Bible',         'desc': 'Modern, public domain'},
-    {'id': 'ASV',   'name': 'American Standard Version',   'desc': 'Classic, public domain (1901)'},
-    {'id': 'YLT',   'name': "Young's Literal Translation", 'desc': 'Word-for-word literal (1862)'},
-    {'id': 'DARBY', 'name': 'Darby Translation',           'desc': 'Scholarly, public domain (1890)'},
-    {'id': 'LSV',   'name': 'Literal Standard Version',    'desc': 'Modern literal, free to use'},
-    {'id': 'NHEB',  'name': 'New Heart English Bible',     'desc': 'Modern, free to use'},
-  ];
-
-  @override
   Widget build(BuildContext context) {
+    final svc          = context.watch<BibleService>();
+    final translations = svc.availableTranslations
+        .where((t) => t.language == 'en' || t.language == 'eng')
+        .toList();
+
+    // Migrate any stale ID before comparing
+    final resolvedId = ChurchProfile.migrateTranslationId(selectedId);
+
     return Container(
       padding: const EdgeInsets.all(16),
       margin: const EdgeInsets.only(bottom: 20),
@@ -477,11 +469,10 @@ class _BibleTranslationPickerState extends State<_BibleTranslationPicker> {
               Container(
                 width: 38, height: 38,
                 decoration: BoxDecoration(
-                  color: const Color(0xFF2E7D32).withValues(alpha: 0.1),
+                  color: primary.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: const Icon(Icons.menu_book_outlined,
-                    color: Color(0xFF2E7D32), size: 20),
+                child: Icon(Icons.menu_book_outlined, color: primary, size: 20),
               ),
               const SizedBox(width: 12),
               const Expanded(
@@ -502,133 +493,92 @@ class _BibleTranslationPickerState extends State<_BibleTranslationPicker> {
           ),
           const SizedBox(height: 14),
 
-          // Quick-select popular translations
-          ...List.generate(_popular.length, (i) {
-            final entry = _popular[i];
-            final id    = entry['id']!;
-            final name  = entry['name']!;
-            final desc  = entry['desc']!;
-            final sel = widget.selectedId == id;
-            return GestureDetector(
-              onTap: () => widget.onChanged(id),
-              child: Container(
-                margin: const EdgeInsets.only(bottom: 8),
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 12, vertical: 10),
-                decoration: BoxDecoration(
-                  color: sel
-                      ? widget.primary.withValues(alpha: 0.07)
-                      : const Color(0xFFF8F9FA),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
+          // Translation list — same source as the Bible Reader
+          if (translations.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 16, height: 16,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: primary),
+                  ),
+                  const SizedBox(width: 10),
+                  const Text('Loading translations…',
+                      style: TextStyle(fontSize: 13, color: textMid)),
+                ],
+              ),
+            )
+          else
+            ...translations.map((t) {
+              final sel = resolvedId == t.id;
+              return GestureDetector(
+                onTap: () => onChanged(t.id),
+                child: Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
                     color: sel
-                        ? widget.primary
-                        : const Color(0xFFDDE1EC),
-                    width: sel ? 2 : 1,
+                        ? primary.withValues(alpha: 0.07)
+                        : const Color(0xFFF8F9FA),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: sel ? primary : const Color(0xFFDDE1EC),
+                      width: sel ? 2 : 1,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      // Abbreviation badge
+                      Container(
+                        width: 52, height: 32,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: sel ? primary : const Color(0xFFEEEEEE),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(t.shortName,
+                            style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: sel
+                                    ? contrastOn(primary)
+                                    : textMid)),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(t.name,
+                            style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: sel
+                                    ? FontWeight.bold
+                                    : FontWeight.w500,
+                                color: sel ? primary : textDark)),
+                      ),
+                      if (sel)
+                        Icon(Icons.check_circle, color: primary, size: 18),
+                    ],
                   ),
                 ),
-                child: Row(
-                  children: [
-                    // Abbreviation badge
-                    Container(
-                      width: 48, height: 32,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: sel
-                            ? widget.primary
-                            : const Color(0xFFEEEEEE),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(id,
-                          style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
-                              color: sel
-                                  ? contrastOn(widget.primary)
-                                  : textMid)),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(name,
-                              style: TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: sel
-                                      ? FontWeight.bold
-                                      : FontWeight.w500,
-                                  color:
-                                      sel ? widget.primary : textDark)),
-                          Text(desc,
-                              style: const TextStyle(
-                                  fontSize: 11, color: textMid)),
-                        ],
-                      ),
-                    ),
-                    if (sel)
-                      Icon(Icons.check_circle,
-                          color: widget.primary, size: 18),
-                  ],
-                ),
-              ),
-            );
-          }),
+              );
+            }),
 
-          // Browse all button
-          const SizedBox(height: 4),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: () => _browseAll(context),
-              icon: const Icon(Icons.public, size: 16),
-              label: const Text('Browse All 1,000+ Translations'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: widget.primary,
-                side: BorderSide(
-                    color: widget.primary.withValues(alpha: 0.4)),
-                padding: const EdgeInsets.symmetric(vertical: 11),
-              ),
-            ),
-          ),
-
-          // Attribution
-          const SizedBox(height: 10),
+          // Attribution — correct source
+          const SizedBox(height: 6),
           Row(
             children: [
               const Icon(Icons.info_outline, size: 12, color: textMid),
               const SizedBox(width: 5),
               const Expanded(
                 child: Text(
-                    'Powered by bible.helloao.org — free, no account needed, 1,000+ translations',
+                    'Powered by bolls.life — free, no account needed',
                     style: TextStyle(fontSize: 10, color: textMid)),
               ),
             ],
           ),
         ],
-      ),
-    );
-  }
-
-  Future<void> _browseAll(BuildContext context) async {
-    final svc = context.read<AppState>().bibleService;
-    // Start loading translations in background
-    if (svc.availableTranslations.isEmpty) svc.fetchTranslations();
-
-    await showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (_) => ChangeNotifierProvider<BibleService>.value(
-        value: svc,
-        child: TranslationPickerSheet(
-          service: svc,
-          primary: widget.primary,
-          onPicked: (id) {
-            widget.onChanged(id);
-          },
-        ),
       ),
     );
   }

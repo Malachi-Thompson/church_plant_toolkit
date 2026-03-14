@@ -1,9 +1,9 @@
 // lib/models/church_profile.dart
-import 'package:flutter/material.dart';
-// Add this import at the top of church_profile.dart
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../services/bible_service.dart';
 
 class ChurchProfile {
   final String name;
@@ -50,8 +50,22 @@ class ChurchProfile {
     this.bibleTranslationId = 'BSB',
   });
 
-  Color get primaryColor  => _hexToColor(primaryColorHex);
+  Color get primaryColor   => _hexToColor(primaryColorHex);
   Color get secondaryColor => _hexToColor(secondaryColorHex);
+
+  // ── Translation ID migration ───────────────────────────────────────────────
+  /// Maps any old/stale IDs (that no longer exist on bolls.life) to their
+  /// current equivalents. Keep in sync with BibleService._idMigrations.
+  static const _translationMigrations = <String, String>{
+    'NASB1995': 'NASB',
+    'CSB':      'CSB17',
+    'HCSB':     'CSB17',
+    'DARBY':    'YLT',
+  };
+
+  /// Returns the canonical bolls.life ID, migrating stale values automatically.
+  static String migrateTranslationId(String id) =>
+      _translationMigrations[id] ?? id;
 
   static Color _hexToColor(String hex) {
     final clean = hex.replaceAll('#', '');
@@ -142,7 +156,8 @@ class ChurchProfile {
     primaryColorHex:    json['primaryColorHex']   ?? '#1A3A5C',
     secondaryColorHex:  json['secondaryColorHex'] ?? '#D4A843',
     logoPath:           json['logoPath']          ?? '',
-    bibleTranslationId: json['bibleTranslationId'] ?? 'BSB',
+    bibleTranslationId: ChurchProfile.migrateTranslationId(
+        json['bibleTranslationId'] ?? 'BSB'),
   );
 
   factory ChurchProfile.empty() => ChurchProfile(
@@ -283,5 +298,117 @@ class ChurchLogo extends StatelessWidget {
       errorBuilder: (_, __, ___) =>
           Icon(Icons.church, color: secondary, size: size * 0.55),
     );
+  }
+}
+// ── BIBLE TRANSLATION PREFERENCE PICKER ──────────────────────────────────────
+//
+// Drop-in widget for settings/profile screens.  Reads the translation list
+// directly from BibleService so the options are always identical to what the
+// Bible Reader app shows — no separate hardcoded list to keep in sync.
+//
+// Usage:
+//   BibleTranslationPreferencePicker(
+//     currentId: profile.bibleTranslationId,
+//     primary:   primary,
+//     onChanged: (newId) => /* save to profile */,
+//   )
+
+class BibleTranslationPreferencePicker extends StatelessWidget {
+  final String              currentId;
+  final Color               primary;
+  final ValueChanged<String> onChanged;
+
+  const BibleTranslationPreferencePicker({
+    super.key,
+    required this.currentId,
+    required this.primary,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final svc          = context.watch<BibleService>();
+    final translations = svc.availableTranslations
+        .where((t) => t.language == 'en' || t.language == 'eng')
+        .toList();
+
+    // Resolve the displayed ID — migrate stale values transparently.
+    final resolvedId = ChurchProfile.migrateTranslationId(currentId);
+
+    // Make sure the resolved ID exists in the list; fall back to first item.
+    final validId = translations.any((t) => t.id == resolvedId)
+        ? resolvedId
+        : (translations.isNotEmpty ? translations.first.id : resolvedId);
+
+    if (translations.isEmpty) {
+      return Text('Loading translations…',
+          style: TextStyle(color: primary, fontSize: 13));
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+      decoration: BoxDecoration(
+        border:       Border.all(color: primary.withValues(alpha: 0.35)),
+        borderRadius: BorderRadius.circular(10),
+        color:        primary.withValues(alpha: 0.04),
+      ),
+      child: DropdownButton<String>(
+        value:         validId,
+        isExpanded:    true,
+        underline:     const SizedBox.shrink(),
+        dropdownColor: Colors.white,
+        borderRadius:  BorderRadius.circular(10),
+        items: translations
+            .map((t) => DropdownMenuItem<String>(
+                  value: t.id,
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 52, height: 28,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: t.id == validId
+                              ? primary
+                              : primary.withValues(alpha: 0.10),
+                          borderRadius: BorderRadius.circular(5),
+                        ),
+                        child: Text(
+                          t.shortName,
+                          style: TextStyle(
+                            fontSize:   10,
+                            fontWeight: FontWeight.bold,
+                            color: t.id == validId
+                                ? _contrastOn(primary)
+                                : primary,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          t.name,
+                          style: TextStyle(
+                            fontSize:   13,
+                            color:      Colors.black87,
+                            fontWeight: t.id == validId
+                                ? FontWeight.bold
+                                : FontWeight.normal,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ))
+            .toList(),
+        onChanged: (id) { if (id != null) onChanged(id); },
+      ),
+    );
+  }
+
+  /// Simple contrast helper — avoids importing theme.dart just for this widget.
+  static Color _contrastOn(Color bg) {
+    final luminance = bg.computeLuminance();
+    return luminance > 0.35 ? Colors.black87 : Colors.white;
   }
 }
