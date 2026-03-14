@@ -5,11 +5,19 @@
 // Works in Notes, Website Builder, and Presentation Studio.
 //
 // Now powered by bolls.life API (integer book IDs 1–66).
+//
+// SPELL CHECK: wraps the input in SpellCheckField so red squiggly underlines
+// appear under misspelled words on all platforms.  Requires:
+//   • lib/services/spell_check_service.dart  (already present)
+//   • lib/widgets/spell_check_field.dart     (already present)
+//   • assets/dictionary/en_US.txt            (download once — see spell_check_service.dart)
+//   • pubspec.yaml assets section must include:  - assets/dictionary/
 
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/bible_service.dart';
 import '../theme.dart';
+import 'spell_check_field.dart';   // ← NEW
 
 // ── REFERENCE PARSER ──────────────────────────────────────────────────────────
 
@@ -154,18 +162,18 @@ VerseRef? detectVerseRef(String text) {
 // ── SCRIPTURE FIELD ───────────────────────────────────────────────────────────
 
 class ScriptureField extends StatefulWidget {
-  final TextEditingController controller;
-  final BibleService           bibleService;
-  final Color                  primary;
-  final Color?                 secondary;
-  final String?                label;
-  final String?                hint;
-  final int                    maxLines;
-  final bool                   expands;
-  final TextStyle?             style;
-  final InputDecoration?       decoration;
-  final ValueChanged<String>?  onChanged;
-  final TextInputType?         keyboardType;
+  final TextEditingController      controller;
+  final BibleService               bibleService;
+  final Color                      primary;
+  final Color?                     secondary;
+  final String?                    label;
+  final String?                    hint;
+  final int                        maxLines;
+  final bool                       expands;
+  final TextStyle?                 style;
+  final InputDecoration?           decoration;
+  final ValueChanged<String>?      onChanged;
+  final TextInputType?             keyboardType;
   final String? Function(String?)? validator;
 
   const ScriptureField({
@@ -270,7 +278,7 @@ class _ScriptureFieldState extends State<ScriptureField> {
 
   @override
   Widget build(BuildContext context) {
-    final primary   = widget.primary;
+    final primary        = widget.primary;
     final baseDecoration = widget.decoration ??
         InputDecoration(labelText: widget.label, hintText: widget.hint);
 
@@ -278,7 +286,8 @@ class _ScriptureFieldState extends State<ScriptureField> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        TextFormField(
+        // ── CHANGED: was TextFormField, now SpellCheckField ─────────────────
+        SpellCheckField(
           controller:   widget.controller,
           maxLines:     widget.expands ? null : widget.maxLines,
           expands:      widget.expands,
@@ -286,16 +295,21 @@ class _ScriptureFieldState extends State<ScriptureField> {
           keyboardType: widget.keyboardType,
           validator:    widget.validator,
           decoration:   baseDecoration,
+          // onChanged is not forwarded here because ScriptureField owns the
+          // listener via widget.controller.addListener(_onTextChanged) above.
+          // SpellCheckField forwards its own internal onChanged, but since
+          // both widgets share the same controller instance the listener
+          // chain fires correctly without double-calling.
         ),
         if (_detected != null || _fetchError != null)
           _ScriptureBanner(
-            ref:          _detected,
-            error:        _fetchError,
-            fetching:     _fetching,
-            primary:      primary,
+            ref:           _detected,
+            error:         _fetchError,
+            fetching:      _fetching,
+            primary:       primary,
             translationId: widget.bibleService.translationId,
-            onImport:     _importVerse,
-            onDismiss:    _dismiss,
+            onImport:      _importVerse,
+            onDismiss:     _dismiss,
           ),
       ],
     );
