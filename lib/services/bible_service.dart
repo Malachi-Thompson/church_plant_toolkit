@@ -75,25 +75,25 @@ class VerseSearchResult {
 // ══════════════════════════════════════════════════════════════════════════════
 
 const _builtinTranslations = <BibleTranslation>[
-  BibleTranslation(id:'KJV',      shortName:'KJV',      name:'King James Version (1611)',           language:'en', languageEnglishName:'English'),
-  BibleTranslation(id:'NKJV',     shortName:'NKJV',     name:'New King James Version',              language:'en', languageEnglishName:'English'),
-  BibleTranslation(id:'ESV',      shortName:'ESV',      name:'English Standard Version',            language:'en', languageEnglishName:'English'),
-  BibleTranslation(id:'NASB1995', shortName:'NASB1995', name:'New American Standard Bible (1995)',   language:'en', languageEnglishName:'English'),
-  BibleTranslation(id:'NIV',      shortName:'NIV',      name:'New International Version',           language:'en', languageEnglishName:'English'),
-  BibleTranslation(id:'NLT',      shortName:'NLT',      name:'New Living Translation',              language:'en', languageEnglishName:'English'),
-  BibleTranslation(id:'CSB',      shortName:'CSB',      name:'Christian Standard Bible',            language:'en', languageEnglishName:'English'),
-  BibleTranslation(id:'BSB',      shortName:'BSB',      name:'Berean Standard Bible',               language:'en', languageEnglishName:'English'),
-  BibleTranslation(id:'ASV',      shortName:'ASV',      name:'American Standard Version (1901)',     language:'en', languageEnglishName:'English'),
-  BibleTranslation(id:'WEB',      shortName:'WEB',      name:'World English Bible',                 language:'en', languageEnglishName:'English'),
-  BibleTranslation(id:'YLT',      shortName:'YLT',      name:"Young's Literal Translation",         language:'en', languageEnglishName:'English'),
-  BibleTranslation(id:'DARBY',    shortName:'DARBY',    name:'Darby Translation',                   language:'en', languageEnglishName:'English'),
-  BibleTranslation(id:'HCSB',     shortName:'HCSB',     name:'Holman Christian Standard Bible',     language:'en', languageEnglishName:'English'),
-  BibleTranslation(id:'AMP',      shortName:'AMP',      name:'Amplified Bible',                     language:'en', languageEnglishName:'English'),
-  BibleTranslation(id:'MSG',      shortName:'MSG',      name:'The Message',                         language:'en', languageEnglishName:'English'),
+  BibleTranslation(id:'KJV',     shortName:'KJV',     name:'King James Version (1769)',            language:'en', languageEnglishName:'English'),
+  BibleTranslation(id:'NKJV',    shortName:'NKJV',    name:'New King James Version (1982)',         language:'en', languageEnglishName:'English'),
+  BibleTranslation(id:'ESV',     shortName:'ESV',     name:'English Standard Version (2001/2016)', language:'en', languageEnglishName:'English'),
+  BibleTranslation(id:'NASB',    shortName:'NASB',    name:'New American Standard Bible (1995)',   language:'en', languageEnglishName:'English'),
+  BibleTranslation(id:'NIV',     shortName:'NIV',     name:'New International Version (1984)',     language:'en', languageEnglishName:'English'),
+  BibleTranslation(id:'NIV2011', shortName:'NIV2011', name:'New International Version (2011)',     language:'en', languageEnglishName:'English'),
+  BibleTranslation(id:'NLT',     shortName:'NLT',     name:'New Living Translation (2015)',        language:'en', languageEnglishName:'English'),
+  BibleTranslation(id:'CSB17',   shortName:'CSB',     name:'Christian Standard Bible (2017)',      language:'en', languageEnglishName:'English'),
+  BibleTranslation(id:'BSB',     shortName:'BSB',     name:'Berean Standard Bible',                language:'en', languageEnglishName:'English'),
+  BibleTranslation(id:'LSB',     shortName:'LSB',     name:'Legacy Standard Bible',                language:'en', languageEnglishName:'English'),
+  BibleTranslation(id:'ASV',     shortName:'ASV',     name:'American Standard Version (1901)',     language:'en', languageEnglishName:'English'),
+  BibleTranslation(id:'WEB',     shortName:'WEB',     name:'World English Bible',                  language:'en', languageEnglishName:'English'),
+  BibleTranslation(id:'YLT',     shortName:'YLT',     name:"Young's Literal Translation (1898)",   language:'en', languageEnglishName:'English'),
+  BibleTranslation(id:'AMP',     shortName:'AMP',     name:'Amplified Bible (2015)',               language:'en', languageEnglishName:'English'),
+  BibleTranslation(id:'MSG',     shortName:'MSG',     name:'The Message (2002)',                   language:'en', languageEnglishName:'English'),
 ];
 
 const popularTranslationIds = <String>[
-  'KJV','NKJV','ESV','NASB1995','NIV','NLT','CSB','BSB','ASV','WEB','YLT','DARBY','HCSB','AMP','MSG',
+  'KJV','NKJV','ESV','NASB','NIV','NIV2011','NLT','CSB17','BSB','LSB','ASV','WEB','YLT','AMP','MSG',
 ];
 
 const _builtinBooks = <BibleBook>[
@@ -195,7 +195,19 @@ class BibleService extends ChangeNotifier {
 
   Future<void> _init() async {
     final prefs = await SharedPreferences.getInstance();
-    _translationId = prefs.getString(_prefKey) ?? 'KJV';
+    String saved = prefs.getString(_prefKey) ?? 'KJV';
+    // Migrate stale IDs that were renamed in bolls.life
+    const _idMigrations = <String, String>{
+      'NASB1995': 'NASB',
+      'CSB':      'CSB17',
+      'HCSB':     'CSB17',
+      'DARBY':    'YLT',   // no Darby on bolls.life — fall back to YLT
+    };
+    if (_idMigrations.containsKey(saved)) {
+      saved = _idMigrations[saved]!;
+      await prefs.setString(_prefKey, saved);
+    }
+    _translationId = saved;
     notifyListeners(); // show built-in data immediately
 
     // Restore cached book list if available (no network)
