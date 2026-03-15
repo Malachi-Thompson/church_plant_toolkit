@@ -336,7 +336,7 @@ class DashboardScreen extends StatelessWidget {
 }
 
 // ── CHURCH LOGO WIDGET ────────────────────────────────────────────────────────
-class ChurchLogo extends StatelessWidget {
+class ChurchLogo extends StatefulWidget {
   final String logoPath;
   final Color primary;
   final Color secondary;
@@ -353,9 +353,34 @@ class ChurchLogo extends StatelessWidget {
   });
 
   @override
+  State<ChurchLogo> createState() => _ChurchLogoState();
+}
+
+class _ChurchLogoState extends State<ChurchLogo> {
+  @override
+  void didUpdateWidget(ChurchLogo old) {
+    super.didUpdateWidget(old);
+    // When the logo path changes, evict both the old and new entries from the
+    // image cache so Flutter always decodes the freshly saved file.
+    if (old.logoPath != widget.logoPath) {
+      if (old.logoPath.isNotEmpty) {
+        FileImage(File(old.logoPath)).evict();
+      }
+      if (widget.logoPath.isNotEmpty) {
+        FileImage(File(widget.logoPath)).evict();
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final logoPath     = widget.logoPath;
+    final secondary    = widget.secondary;
+    final size         = widget.size;
+    final borderRadius = widget.borderRadius;
+
     return Container(
-      width: size,
+      width:  size,
       height: size,
       decoration: BoxDecoration(
         color: secondary,
@@ -369,7 +394,11 @@ class ChurchLogo extends StatelessWidget {
       ),
       clipBehavior: Clip.antiAlias,
       child: logoPath.isNotEmpty && File(logoPath).existsSync()
-          ? Image.file(File(logoPath), fit: BoxFit.cover)
+          ? Image.file(
+              File(logoPath),
+              key: ValueKey(logoPath),
+              fit: BoxFit.cover,
+            )
           : Icon(Icons.church,
               color: contrastOn(secondary), size: size * 0.55),
     );
