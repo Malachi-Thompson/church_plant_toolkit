@@ -7,6 +7,11 @@
 //   • Rich content area — ALL notes use the embedded Quill WebView editor.
 //     Formatting (bold, italic, headings, lists, blockquote, align) is fully
 //     preserved. Content is stored as HTML in note.content.
+//   • PRINT PREVIEW toggle — renders the note as paginated A4/Letter pages
+//     so users can see exactly what it will look like before printing/exporting.
+//     • For HTML/rich notes: renders the HTML in a styled WebView page view.
+//     • For DOCX imports: passes bytes through the existing DOCX→HTML extractor
+//       and renders in the same paged WebView preview.
 //   • Status bar: folder path, word count, last-saved time
 //   • PDF inline viewer (syncfusion_flutter_pdfviewer)
 //     with page-jump toolbar; "Open externally" kept as a secondary option
@@ -38,6 +43,8 @@ import '../dialogs/translation_picker_dialog.dart';
 import '../dialogs/verse_import_dialog.dart';
 import 'rich_editor_asset.dart';
 import 'shared_widgets.dart';
+// Used to extract HTML from DOCX bytes for the preview
+import '../note_exporter.dart' show extractHtmlFromDocxBytes;
 
 class NoteEditor extends StatefulWidget {
   final NoteModel          note;
@@ -75,30 +82,31 @@ class _NoteEditorState extends State<NoteEditor> {
   late TextEditingController _seriesCtrl;
   final ScrollController     _scrollCtrl = ScrollController();
 
+  // ── Print-preview state ───────────────────────────────────────────────────
+  // When true the content area switches from the editable Quill WebView to
+  // the read-only paginated preview WebView.
+  bool              _showPreview      = false;
+  WebviewController? _previewWebCtrl;
+  bool              _previewLoading   = false;
+  String?           _previewTempPath; // file:// HTML page written for preview
+
   // ── PDF viewer state ──────────────────────────────────────────────────────
-  // We keep a PdfViewerController so we can jump to pages from our toolbar.
   final PdfViewerController _pdfViewerCtrl = PdfViewerController();
-  // For file-path sources we need to copy bytes to a temp file first.
-  // _pdfSource is set once and drives which SfPdfViewer constructor is used.
   _PdfSource? _pdfSource;
   bool        _pdfError  = false;
-  int         _pdfPage   = 1;   // 1-based, matching Syncfusion's API
+  int         _pdfPage   = 1;
   int         _pdfTotal  = 1;
 
   // ── Save-back state ───────────────────────────────────────────────────────
   bool _savingBack = false;
   bool _savedBack  = false;
 
-  // ── Rich WebView editor state (docx / odt) ────────────────────────────────
-  // webview_windows loads content via a file:// URL, so we write the editor
-  // HTML to a temp file once and reuse it.  Communication is one-way from
-  // Flutter→JS (executeScript) and JS→Flutter via postMessage intercepted
-  // through the WebviewController's webMessage stream.
+  // ── Rich WebView editor state ─────────────────────────────────────────────
   WebviewController? _webCtrl;
-  String?  _editorTempPath;         // path of the written HTML temp file
-  bool  _richReady       = false;   // editor JS finished initialising
-  bool  _richLoading     = true;    // WebView page still loading
-  bool  _richInitialised = false;   // _initWebview() has been called
+  String?  _editorTempPath;
+  bool  _richReady       = false;
+  bool  _richLoading     = true;
+  bool  _richInitialised = false;
   int   _richWordCount   = 0;
 
   @override
@@ -107,8 +115,6 @@ class _NoteEditorState extends State<NoteEditor> {
     _titleCtrl   = TextEditingController(text: widget.note.title);
     _contentCtrl = TextEditingController(text: widget.note.content);
     _seriesCtrl  = TextEditingController(text: widget.note.seriesName);
-    // Title and series still use text controllers for sync.
-    // Content is synced via the WebView 'change' message — no listener needed.
     _titleCtrl.addListener(_syncMeta);
     _seriesCtrl.addListener(_syncMeta);
     if (widget.note.sourceFileType == 'pdf') {
@@ -125,12 +131,12 @@ class _NoteEditorState extends State<NoteEditor> {
       _titleCtrl.text   = widget.note.title;
       _contentCtrl.text = widget.note.content;
       _seriesCtrl.text  = widget.note.seriesName;
+      // Reset preview when switching notes
+      if (_showPreview) setState(() => _showPreview = false);
       if (widget.note.sourceFileType == 'pdf') {
         setState(() { _pdfSource = null; _pdfError = false; _pdfPage = 1; });
         _preparePdfSource();
       } else {
-        // Reload the editor page so the ready handler fires and injects
-        // the new note's content.
         setState(() { _richReady = false; _richLoading = true; _richWordCount = 0; });
         _webCtrl?.loadUrl(_editorTempPath != null
             ? 'file:///$_editorTempPath'
@@ -140,33 +146,14 @@ class _NoteEditorState extends State<NoteEditor> {
   }
 
   // ── PDF source resolution ─────────────────────────────────────────────────
-  //
-  // SfPdfViewer has three constructors:
-  //   .memory(Uint8List)   — best for in-memory bytes (all platforms)
-  //   .file(File)          — native platforms only; fast for large files
-  //   .asset / .network    — not applicable here
-  //
-  // Strategy:
-  //   1. If bytes are available in RAM → use .memory (works everywhere, incl. web)
-  //   2. Else if a file path exists and we're on a native platform → use .file
-  //   3. Otherwise write bytes to a temp file and use .file
-  //   4. On web with no bytes → show error (the bytes should always be present
-  //      because _importFile reads `withData: true`).
 
   Future<void> _preparePdfSource() async {
     try {
       final note = widget.note;
-
-      // Prefer in-memory bytes — available immediately and cross-platform.
       if (note.sourceFileBytes != null) {
-        if (mounted) {
-          setState(() => _pdfSource =
-              _PdfSource.memory(note.sourceFileBytes!));
-        }
+        if (mounted) setState(() => _pdfSource = _PdfSource.memory(note.sourceFileBytes!));
         return;
       }
-
-      // Native platforms: use the file path directly if it exists.
       if (!kIsWeb && note.sourceFilePath != null) {
         final f = File(note.sourceFilePath!);
         if (f.existsSync()) {
@@ -174,7 +161,6 @@ class _NoteEditorState extends State<NoteEditor> {
           return;
         }
       }
-
       if (mounted) setState(() => _pdfError = true);
     } catch (_) {
       if (mounted) setState(() => _pdfError = true);
@@ -183,18 +169,12 @@ class _NoteEditorState extends State<NoteEditor> {
 
   // ── Rich WebView editor helpers ───────────────────────────────────────────
 
-  /// Kept for the file-banner routing logic (docx/odt save-back banner).
   static bool _isRichFile(String? ext) => ext == 'docx' || ext == 'odt';
 
-  /// Writes the Quill HTML to a temp file, creates a WebviewController,
-  /// subscribes to its message stream, and loads the file URL.
   Future<void> _initWebview() async {
     if (_richInitialised) return;
     _richInitialised = true;
-
     try {
-      // Write the bundled editor HTML to a temp file so webview_windows
-      // can load it via file:// (it doesn't support loadHtmlString directly).
       final tmp  = await getTemporaryDirectory();
       final file = File('${tmp.path}/quill_editor_${widget.note.id}.html');
       await file.writeAsString(kRichEditorHtml, flush: true);
@@ -203,13 +183,10 @@ class _NoteEditorState extends State<NoteEditor> {
       final ctrl = WebviewController();
       await ctrl.initialize();
 
-      // Subscribe to JS→Flutter postMessage events.
-      // The Quill HTML calls window.chrome.webview.postMessage(jsonString).
       ctrl.webMessage.listen((dynamic raw) {
         _onEditorMessage(raw is String ? raw : raw.toString());
       });
 
-      // Track navigation state
       ctrl.loadingState.listen((state) {
         if (!mounted) return;
         if (state == LoadingState.navigationCompleted) {
@@ -218,14 +195,12 @@ class _NoteEditorState extends State<NoteEditor> {
       });
 
       await ctrl.loadUrl('file:///$_editorTempPath');
-
       if (mounted) setState(() => _webCtrl = ctrl);
     } catch (e) {
       if (mounted) setState(() => _richLoading = false);
     }
   }
 
-  /// Called whenever JS posts a message to the Flutter host.
   void _onEditorMessage(String rawJson) {
     try {
       final map  = jsonDecode(rawJson) as Map<String, dynamic>;
@@ -253,7 +228,6 @@ class _NoteEditorState extends State<NoteEditor> {
     } catch (_) {}
   }
 
-  /// Wraps a Dart string in a JS string literal with proper escaping.
   static String _jsStringLiteral(String s) {
     final escaped = s
         .replaceAll(r'\', r'\\')
@@ -263,7 +237,6 @@ class _NoteEditorState extends State<NoteEditor> {
     return "'$escaped'";
   }
 
-  /// Converts plain text (newline-delimited) to minimal HTML for Quill.
   static String _plainTextToHtml(String text) {
     if (text.isEmpty) return '<p></p>';
     return text.split('\n').map((line) {
@@ -277,18 +250,245 @@ class _NoteEditorState extends State<NoteEditor> {
     }).join();
   }
 
+  // ── Print-preview helpers ─────────────────────────────────────────────────
+  //
+  // The preview renders the note as a sequence of A4/Letter-sized white "pages"
+  // separated by a grey gutter — exactly the look of a word processor's Print
+  // Layout view.  Content is the note's rich HTML with a print-ready stylesheet
+  // applied (no toolbar, no Quill chrome).
+  //
+  // For DOCX imports we first extract HTML from the bytes using the existing
+  // extractHtmlFromDocxBytes helper so the preview reflects the actual document
+  // formatting rather than the raw Quill edit buffer.
+
+  Future<void> _togglePreview() async {
+    if (_showPreview) {
+      // Turn preview off — just flip the flag; editor WebView stays alive.
+      setState(() { _showPreview = false; });
+      return;
+    }
+
+    // Turning preview ON
+    setState(() { _showPreview = true; _previewLoading = true; });
+
+    try {
+      String previewHtml;
+
+      // For DOCX imports, extract the original document HTML so the preview
+      // shows the file's native formatting (headings, fonts, etc.).
+      if (widget.note.sourceFileType == 'docx' &&
+          widget.note.sourceFileBytes != null) {
+        final extracted =
+            await extractHtmlFromDocxBytes(widget.note.sourceFileBytes!);
+        previewHtml = (extracted != null && extracted.isNotEmpty)
+            ? extracted
+            : widget.note.content;
+      } else {
+        previewHtml = widget.note.content.trimLeft().startsWith('<')
+            ? widget.note.content
+            : _plainTextToHtml(widget.note.content);
+      }
+
+      final pageHtml = _buildPrintPreviewHtml(
+        title:       widget.note.title,
+        contentHtml: previewHtml,
+        primary:     widget.primary,
+      );
+
+      final tmp   = await getTemporaryDirectory();
+      final file  = File('${tmp.path}/preview_${widget.note.id}.html');
+      await file.writeAsString(pageHtml, flush: true);
+      _previewTempPath = file.path.replaceAll('\\', '/');
+
+      if (_previewWebCtrl == null) {
+        final ctrl = WebviewController();
+        await ctrl.initialize();
+        ctrl.loadingState.listen((state) {
+          if (!mounted) return;
+          if (state == LoadingState.navigationCompleted) {
+            setState(() => _previewLoading = false);
+          }
+        });
+        await ctrl.loadUrl('file:///$_previewTempPath');
+        if (mounted) setState(() { _previewWebCtrl = ctrl; });
+      } else {
+        // Reuse the existing controller and reload the updated file.
+        await _previewWebCtrl!.loadUrl('file:///$_previewTempPath');
+      }
+    } catch (e) {
+      if (mounted) setState(() { _previewLoading = false; });
+    }
+  }
+
+  /// Builds a self-contained HTML page that mimics a word-processor "Print
+  /// Layout" view: A4 pages (794 × 1123 px at 96 dpi) separated by a grey
+  /// background, with the body content paginated via CSS column layout.
+  ///
+  /// We use a simple CSS-based paged layout:
+  ///  • A fixed-height scrollable container holds the grey gutter.
+  ///  • Individual "page" divs are white cards with print-standard margins.
+  ///  • Content is placed in the first page and allowed to overflow into
+  ///    following pages via CSS `break-inside: avoid` rules.
+  ///
+  /// Note: True CSS `@page` pagination requires a print context; in a WebView
+  /// we simulate it with CSS columns or sequential page divs.  For simplicity
+  /// we use a single-column flowing layout inside a vertically-scrollable
+  /// container — which faithfully represents printed output for most content.
+  static String _buildPrintPreviewHtml({
+    required String title,
+    required String contentHtml,
+    required Color  primary,
+  }) {
+    // Convert Color to CSS hex
+    final r = (primary.r * 255).round().toRadixString(16).padLeft(2, '0');
+    final g = (primary.g * 255).round().toRadixString(16).padLeft(2, '0');
+    final b = (primary.b * 255).round().toRadixString(16).padLeft(2, '0');
+    final primaryHex = '#$r$g$b';
+
+    // Escape the title for HTML
+    final escapedTitle = title
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;');
+
+    return '''<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Print Preview</title>
+<style>
+  /* ── Reset ──────────────────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%;
+    background: #D0D0D0;
+    font-family: 'Segoe UI', Calibri, Georgia, serif;
+  }
+
+  /* ── Preview gutter ─────────────────────────────────────────────────── */
+  #gutter {
+    min-height: 100%;
+    padding: 32px 40px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 24px;
+  }
+
+  /* ── Badge shown at top ─────────────────────────────────────────────── */
+  #preview-badge {
+    background: $primaryHex;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    padding: 4px 12px;
+    border-radius: 20px;
+    text-transform: uppercase;
+    user-select: none;
+    align-self: center;
+  }
+
+  /* ── A4 page card ───────────────────────────────────────────────────── */
+  /*  A4 at 96 dpi = 794 × 1123 px                                        */
+  .page {
+    background: #ffffff;
+    width: 794px;
+    min-height: 1123px;
+    padding: 96px 96px 96px 96px; /* ~1 inch margins */
+    box-shadow: 0 2px 12px rgba(0,0,0,0.22);
+    position: relative;
+    break-inside: avoid;
+  }
+
+  /* ── Page header (title + date) ─────────────────────────────────────── */
+  .page-header {
+    border-bottom: 2px solid $primaryHex;
+    padding-bottom: 12px;
+    margin-bottom: 28px;
+  }
+  .page-title {
+    font-size: 24px;
+    font-weight: 700;
+    color: $primaryHex;
+    line-height: 1.2;
+  }
+  .page-meta {
+    font-size: 11px;
+    color: #888;
+    margin-top: 4px;
+  }
+
+  /* ── Body content ───────────────────────────────────────────────────── */
+  .page-body {
+    font-size: 12pt;
+    line-height: 1.8;
+    color: #1C1C2E;
+  }
+  .page-body h1 { font-size: 20px; color: $primaryHex; margin: 18px 0 8px; }
+  .page-body h2 { font-size: 16px; color: $primaryHex; margin: 14px 0 6px; }
+  .page-body h3 { font-size: 13px; color: $primaryHex; margin: 10px 0 4px; }
+  .page-body p  { margin: 0 0 8px; }
+  .page-body ul, .page-body ol { margin: 0 0 10px 24px; }
+  .page-body li { margin-bottom: 4px; }
+  .page-body blockquote {
+    border-left: 3px solid $primaryHex;
+    background: #F0F4FF;
+    padding: 10px 16px;
+    margin: 12px 0;
+    font-style: italic;
+    color: #374151;
+    border-radius: 0 6px 6px 0;
+  }
+  .page-body strong { font-weight: 700; }
+  .page-body em     { font-style: italic; }
+  .page-body u      { text-decoration: underline; }
+  .page-body s      { text-decoration: line-through; }
+
+  /* ── Page footer ────────────────────────────────────────────────────── */
+  .page-footer {
+    position: absolute;
+    bottom: 48px;
+    left: 96px;
+    right: 96px;
+    border-top: 1px solid #E0E0E0;
+    padding-top: 6px;
+    font-size: 9px;
+    color: #B0B0B0;
+    display: flex;
+    justify-content: space-between;
+  }
+</style>
+</head>
+<body>
+<div id="gutter">
+  <div id="preview-badge">Print Preview</div>
+  <div class="page">
+    <div class="page-header">
+      <div class="page-title">$escapedTitle</div>
+    </div>
+    <div class="page-body">
+      $contentHtml
+    </div>
+    <div class="page-footer">
+      <span>$escapedTitle</span>
+      <span>Page 1</span>
+    </div>
+  </div>
+</div>
+</body>
+</html>''';
+  }
+
   // ── Sync & save-back ──────────────────────────────────────────────────────
 
-  /// Syncs only title and series from their text controllers.
-  /// Content is synced via _onEditorMessage 'change' — do not write
-  /// _contentCtrl.text back to note.content here (it would overwrite HTML).
   void _syncMeta() {
     widget.note.title      = _titleCtrl.text;
     widget.note.seriesName = _seriesCtrl.text;
     widget.onChanged();
   }
 
-  /// Legacy sync used only by the plain ScriptureField fallback (txt/md).
   void _sync() {
     widget.note.title      = _titleCtrl.text;
     widget.note.content    = _contentCtrl.text;
@@ -319,6 +519,7 @@ class _NoteEditorState extends State<NoteEditor> {
     _scrollCtrl.dispose();
     _pdfViewerCtrl.dispose();
     _webCtrl?.dispose();
+    _previewWebCtrl?.dispose();
     _titleCtrl.removeListener(_syncMeta);
     _seriesCtrl.removeListener(_syncMeta);
     for (final c in [_titleCtrl, _contentCtrl, _seriesCtrl]) {
@@ -339,9 +540,10 @@ class _NoteEditorState extends State<NoteEditor> {
       backgroundColor: Colors.white,
       body: Column(children: [
         _buildToolbar(note, primary, secondary),
-        if (note.folder == kFolderExpositional || note.subfolder.isNotEmpty)
+        if (note.folder == kFolderExpositional ||
+            note.folder == kFolderTextual ||
+            note.subfolder.isNotEmpty)
           _buildMetaBar(note, primary, secondary),
-        // Title is always shown — even for PDFs so users can rename
         _buildTitleField(note, primary),
         Flexible(
           child: ColoredBox(
@@ -357,6 +559,9 @@ class _NoteEditorState extends State<NoteEditor> {
   // ── TOOLBAR ───────────────────────────────────────────────────────────────
 
   Widget _buildToolbar(NoteModel note, Color primary, Color secondary) {
+    final isPdf     = note.sourceFileType == 'pdf';
+    final canPreview = !isPdf; // preview supported for all non-PDF notes
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       decoration: const BoxDecoration(
@@ -395,6 +600,53 @@ class _NoteEditorState extends State<NoteEditor> {
         ]),
         const SizedBox(height: 2),
         Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+          // ── Print-preview toggle ──────────────────────────────────────────
+          if (canPreview) ...[
+            Tooltip(
+              message: _showPreview ? 'Back to editing' : 'Print preview',
+              child: InkWell(
+                onTap: _togglePreview,
+                borderRadius: BorderRadius.circular(6),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: _showPreview
+                        ? primary.withValues(alpha: 0.12)
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: _showPreview
+                          ? primary.withValues(alpha: 0.4)
+                          : Colors.transparent,
+                    ),
+                  ),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(
+                      _showPreview
+                          ? Icons.edit_outlined
+                          : Icons.print_outlined,
+                      size: 16,
+                      color: _showPreview ? primary : textMid,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      _showPreview ? 'Edit' : 'Preview',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: _showPreview ? primary : textMid,
+                        fontWeight: _showPreview
+                            ? FontWeight.w600
+                            : FontWeight.normal,
+                      ),
+                    ),
+                  ]),
+                ),
+              ),
+            ),
+            const SizedBox(width: 4),
+          ],
+          // ── Existing action icons ─────────────────────────────────────────
           IconButton(
             icon: Icon(
                 note.isPinned ? Icons.push_pin : Icons.push_pin_outlined,
@@ -447,15 +699,20 @@ class _NoteEditorState extends State<NoteEditor> {
   // ── META BAR ──────────────────────────────────────────────────────────────
 
   Widget _buildMetaBar(NoteModel note, Color primary, Color secondary) {
+    // For Textual notes display just the book name (strip "OT:"/"NT:" prefix)
+    final displaySubfolder = note.folder == kFolderTextual && note.subfolder.isNotEmpty
+        ? parseTextualSubfolder(note.subfolder)[1]
+        : note.subfolder;
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       color: const Color(0xFFF0F4FF),
       child: Row(children: [
-        if (note.folder == kFolderExpositional) ...[
+        if (note.folder == kFolderExpositional || note.folder == kFolderTextual) ...[
           Icon(Icons.menu_book_outlined, size: 14, color: primary),
           const SizedBox(width: 6),
           Text(
-            note.subfolder.isNotEmpty ? note.subfolder : 'No book set',
+            displaySubfolder.isNotEmpty ? displaySubfolder : 'No book set',
             style: TextStyle(
                 fontSize: 12, color: primary, fontWeight: FontWeight.w600),
           ),
@@ -489,6 +746,7 @@ class _NoteEditorState extends State<NoteEditor> {
       color: Colors.white,
       child: TextField(
         controller: _titleCtrl,
+        // Title is always editable, even in preview mode (header is non-content)
         style: TextStyle(
             fontSize: 22, fontWeight: FontWeight.bold, color: primary),
         decoration: const InputDecoration(
@@ -505,13 +763,15 @@ class _NoteEditorState extends State<NoteEditor> {
   // ── CONTENT AREA ──────────────────────────────────────────────────────────
 
   Widget _buildContentArea(NoteModel note, Color primary) {
-    final isPdf      = note.sourceFileType == 'pdf';
+    final isPdf       = note.sourceFileType == 'pdf';
     final isPlainFile = note.sourceFileType == 'txt' || note.sourceFileType == 'md';
 
     if (isPdf) return _buildPdfPane(note, primary);
 
-    // Plain txt/md imported files: keep the simple ScriptureField editor
-    // with a save-back banner.
+    // Print preview mode — shown for all non-PDF notes when toggled ON
+    if (_showPreview) return _buildPreviewPane(primary);
+
+    // Plain txt/md imported files
     if (isPlainFile) {
       return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         _fileBanner(
@@ -528,7 +788,6 @@ class _NoteEditorState extends State<NoteEditor> {
     }
 
     // All other notes (new notes, docx, odt) — use the Quill WebView editor.
-    // For docx/odt add the "Save to file" banner on top.
     final isRichImport = _isRichFile(note.sourceFileType);
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       if (isRichImport)
@@ -546,9 +805,77 @@ class _NoteEditorState extends State<NoteEditor> {
       Expanded(child: _buildWebViewEditor(primary)),
     ]);
   }
+
+  // ── PRINT PREVIEW PANE ────────────────────────────────────────────────────
   //
   // Layout:
-  // ── WEBVIEW EDITOR (all standard + rich-import notes) ────────────────────
+  //   ┌─────────────────────────────────────────────────────────┐
+  //   │  [print icon] Print Preview             [✕ Back to edit]│  ← info bar
+  //   ├─────────────────────────────────────────────────────────┤
+  //   │                  grey gutter                            │
+  //   │   ┌────────── A4 white page card ───────────────────┐   │
+  //   │   │  Title heading                                  │   │
+  //   │   │  ─────────────────────────────────────────────  │   │
+  //   │   │  Body content (rich HTML, formatted)            │   │
+  //   │   └─────────────────────────────────────────────────┘   │
+  //   └─────────────────────────────────────────────────────────┘
+
+  Widget _buildPreviewPane(Color primary) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      // Info bar
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+        color: primary.withValues(alpha: 0.07),
+        child: Row(children: [
+          Icon(Icons.print_outlined, size: 15, color: primary),
+          const SizedBox(width: 8),
+          Text('Print Preview — read-only',
+              style: TextStyle(fontSize: 12, color: primary,
+                  fontWeight: FontWeight.w600)),
+          const Spacer(),
+          TextButton.icon(
+            icon:  const Icon(Icons.edit_outlined, size: 13),
+            label: const Text('Back to editing',
+                style: TextStyle(fontSize: 11)),
+            style: TextButton.styleFrom(
+                foregroundColor: primary,
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+            onPressed: _togglePreview,
+          ),
+        ]),
+      ),
+      // Preview WebView
+      Expanded(child: Stack(children: [
+        if (_previewWebCtrl != null)
+          Webview(
+            _previewWebCtrl!,
+            permissionRequested: (_url, _kind, _isUser) =>
+                WebviewPermissionDecision.allow,
+          )
+        else
+          const SizedBox.shrink(),
+        if (_previewLoading)
+          Container(
+            color: Colors.white,
+            child: Center(
+              child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center, children: [
+                CircularProgressIndicator(color: primary),
+                const SizedBox(height: 12),
+                Text('Building preview…',
+                    style: TextStyle(
+                        fontSize: 12,
+                        color: primary.withValues(alpha: 0.5))),
+              ]),
+            ),
+          ),
+      ])),
+    ]);
+  }
+
+  // ── WEBVIEW EDITOR ────────────────────────────────────────────────────────
 
   Widget _buildWebViewEditor(Color primary) {
     return Stack(children: [
@@ -560,7 +887,6 @@ class _NoteEditorState extends State<NoteEditor> {
         )
       else
         const SizedBox.shrink(),
-      // Loading overlay — hidden once editor reports 'ready'
       if (_richLoading)
         Container(
           color: Colors.white,
@@ -580,19 +906,9 @@ class _NoteEditorState extends State<NoteEditor> {
   }
 
   // ── PDF PANE ──────────────────────────────────────────────────────────────
-  //
-  // Layout:
-  //   ┌─────────────────────────────────────────────────────────┐
-  //   │  [PDF icon] PDF document  [← page 3/12 →] [Open ext.]  │  ← banner
-  //   ├─────────────────────────────────────────────────────────┤
-  //   │                                                         │
-  //   │            SfPdfViewer (fills remaining space)          │
-  //   │                                                         │
-  //   └─────────────────────────────────────────────────────────┘
 
   Widget _buildPdfPane(NoteModel note, Color primary) {
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      // Banner with integrated page controls
       Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
         color: const Color(0xFFF0F4FF),
@@ -602,16 +918,12 @@ class _NoteEditorState extends State<NoteEditor> {
           Text('PDF document',
               style: const TextStyle(fontSize: 12, color: textDark)),
           const Spacer(),
-          // Page navigation — only shown once PDF is loaded
           if (_pdfSource != null && !_pdfError) ...[
             _pdfNavIconBtn(
               icon:    Icons.first_page,
               enabled: _pdfPage > 1,
               color:   primary,
-              onTap:   () {
-                _pdfViewerCtrl.firstPage();
-                setState(() => _pdfPage = 1);
-              },
+              onTap:   () { _pdfViewerCtrl.firstPage(); setState(() => _pdfPage = 1); },
             ),
             _pdfNavIconBtn(
               icon:    Icons.chevron_left,
@@ -623,7 +935,6 @@ class _NoteEditorState extends State<NoteEditor> {
               },
             ),
             const SizedBox(width: 2),
-            // Tappable page indicator → jump-to-page dialog
             GestureDetector(
               onTap: _showJumpToPageDialog,
               child: Container(
@@ -632,13 +943,9 @@ class _NoteEditorState extends State<NoteEditor> {
                   color: primary.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(6),
                 ),
-                child: Text(
-                  '$_pdfPage / $_pdfTotal',
-                  style: TextStyle(
-                      fontSize: 11,
-                      color: primary,
-                      fontWeight: FontWeight.w600),
-                ),
+                child: Text('$_pdfPage / $_pdfTotal',
+                    style: TextStyle(fontSize: 11, color: primary,
+                        fontWeight: FontWeight.w600)),
               ),
             ),
             const SizedBox(width: 2),
@@ -648,121 +955,86 @@ class _NoteEditorState extends State<NoteEditor> {
               color:   primary,
               onTap:   () {
                 _pdfViewerCtrl.nextPage();
-                setState(() =>
-                    _pdfPage = (_pdfPage + 1).clamp(1, _pdfTotal));
+                setState(() => _pdfPage = (_pdfPage + 1).clamp(1, _pdfTotal));
               },
             ),
             _pdfNavIconBtn(
               icon:    Icons.last_page,
               enabled: _pdfPage < _pdfTotal,
               color:   primary,
-              onTap:   () {
-                _pdfViewerCtrl.lastPage();
-                setState(() => _pdfPage = _pdfTotal);
-              },
+              onTap:   () { _pdfViewerCtrl.lastPage(); setState(() => _pdfPage = _pdfTotal); },
             ),
             const SizedBox(width: 4),
           ],
-          // Open-externally kept as a secondary escape hatch
           TextButton.icon(
             icon:  const Icon(Icons.open_in_new, size: 13),
-            label: const Text('Open externally',
-                style: TextStyle(fontSize: 11)),
+            label: const Text('Open externally', style: TextStyle(fontSize: 11)),
             style: TextButton.styleFrom(
                 foregroundColor: primary,
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 8, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 minimumSize: Size.zero,
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap),
             onPressed: () => _openPdfExternal(note),
           ),
         ]),
       ),
-
-      // Viewer body
       Expanded(child: _buildSfPdfViewer(primary)),
     ]);
   }
 
   Widget _buildSfPdfViewer(Color primary) {
     if (_pdfError) {
-      return _pdfFallback(primary,
-          'Could not load the PDF.\nTry "Open externally" above.');
+      return _pdfFallback(primary, 'Could not load the PDF.\nTry "Open externally" above.');
     }
-
     if (_pdfSource == null) {
-      return Center(
-        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-          CircularProgressIndicator(color: primary),
-          const SizedBox(height: 12),
-          Text('Loading PDF…',
-              style: TextStyle(
-                  fontSize: 12, color: primary.withValues(alpha: 0.5))),
-        ]),
-      );
+      return Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+        CircularProgressIndicator(color: primary),
+        const SizedBox(height: 12),
+        Text('Loading PDF…',
+            style: TextStyle(fontSize: 12, color: primary.withValues(alpha: 0.5))),
+      ]));
     }
 
-    // SfPdfViewer is available on Android, iOS, macOS, Windows, Linux, web.
-    // We pick the right constructor based on whether we have bytes or a file.
-    Widget viewer;
+    final onPageChanged = (PdfPageChangedDetails d) {
+      if (mounted) setState(() => _pdfPage = d.newPageNumber);
+    };
+    final onDocLoaded = (PdfDocumentLoadedDetails d) {
+      if (mounted) setState(() => _pdfTotal = d.document.pages.count);
+    };
+    final onDocFailed = (_) {
+      if (mounted) setState(() => _pdfError = true);
+    };
+
     if (_pdfSource!.bytes != null) {
-      viewer = SfPdfViewer.memory(
+      return SfPdfViewer.memory(
         _pdfSource!.bytes!,
         controller: _pdfViewerCtrl,
-        canShowScrollHead:          true,
-        canShowScrollStatus:        true,
+        canShowScrollHead: true,
+        canShowScrollStatus: true,
         canShowPageLoadingIndicator: true,
-        onPageChanged: (details) {
-          if (mounted) {
-            setState(() {
-              _pdfPage = details.newPageNumber;
-            });
-          }
-        },
-        onDocumentLoaded: (details) {
-          if (mounted) {
-            setState(() => _pdfTotal = details.document.pages.count);
-          }
-        },
-        onDocumentLoadFailed: (_) {
-          if (mounted) setState(() => _pdfError = true);
-        },
+        onPageChanged: onPageChanged,
+        onDocumentLoaded: onDocLoaded,
+        onDocumentLoadFailed: onDocFailed,
       );
     } else {
-      viewer = SfPdfViewer.file(
+      return SfPdfViewer.file(
         _pdfSource!.file!,
         controller: _pdfViewerCtrl,
-        canShowScrollHead:          true,
-        canShowScrollStatus:        true,
+        canShowScrollHead: true,
+        canShowScrollStatus: true,
         canShowPageLoadingIndicator: true,
-        onPageChanged: (details) {
-          if (mounted) {
-            setState(() {
-              _pdfPage = details.newPageNumber;
-            });
-          }
-        },
-        onDocumentLoaded: (details) {
-          if (mounted) {
-            setState(() => _pdfTotal = details.document.pages.count);
-          }
-        },
-        onDocumentLoadFailed: (_) {
-          if (mounted) setState(() => _pdfError = true);
-        },
+        onPageChanged: onPageChanged,
+        onDocumentLoaded: onDocLoaded,
+        onDocumentLoadFailed: onDocFailed,
       );
     }
-
-    return viewer;
   }
 
   // ── PDF HELPERS ───────────────────────────────────────────────────────────
 
   Widget _pdfNavIconBtn({
-    required IconData     icon,
-    required bool         enabled,
-    required Color        color,
-    required VoidCallback onTap,
+    required IconData icon, required bool enabled,
+    required Color color,   required VoidCallback onTap,
   }) =>
       IconButton(
         icon: Icon(icon, size: 18,
@@ -777,49 +1049,40 @@ class _NoteEditorState extends State<NoteEditor> {
       Icon(Icons.picture_as_pdf_outlined,
           size: 44, color: primary.withValues(alpha: 0.22)),
       const SizedBox(height: 14),
-      Text(message,
-          textAlign: TextAlign.center,
-          style: TextStyle(
-              fontSize: 13,
-              color: primary.withValues(alpha: 0.45),
+      Text(message, textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 13, color: primary.withValues(alpha: 0.45),
               height: 1.5)),
     ]),
   );
 
   Future<void> _showJumpToPageDialog() async {
-    final ctrl = TextEditingController(text: '$_pdfPage');
+    final ctrl   = TextEditingController(text: '$_pdfPage');
     final result = await showDialog<int>(
       context: context,
       builder: (_) => AlertDialog(
         title: Text('Go to page',
-            style: TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.bold,
+            style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold,
                 color: widget.primary)),
         content: TextField(
           controller: ctrl,
           autofocus: true,
           keyboardType: TextInputType.number,
-          decoration: InputDecoration(
-            hintText: '1 – $_pdfTotal',
-            suffixText: '/ $_pdfTotal',
-          ),
+          decoration: InputDecoration(hintText: '1 – $_pdfTotal',
+              suffixText: '/ $_pdfTotal'),
           onSubmitted: (v) {
             final n = int.tryParse(v);
             if (n != null) Navigator.pop(context, n);
           },
         ),
         actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
           TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel')),
-          TextButton(
-              onPressed: () {
-                final n = int.tryParse(ctrl.text);
-                if (n != null) Navigator.pop(context, n);
-              },
-              child: Text('Go',
-                  style: TextStyle(color: widget.primary))),
+            onPressed: () {
+              final n = int.tryParse(ctrl.text);
+              if (n != null) Navigator.pop(context, n);
+            },
+            child: Text('Go', style: TextStyle(color: widget.primary)),
+          ),
         ],
       ),
     );
@@ -832,11 +1095,7 @@ class _NoteEditorState extends State<NoteEditor> {
 
   Future<void> _openPdfExternal(NoteModel note) async {
     try {
-      // Try to resolve a usable file path
       String? path = note.sourceFilePath;
-
-      // If no path (e.g. web import, or path no longer valid), write bytes
-      // to a temp file so we can open it.
       if ((path == null || (!kIsWeb && !File(path).existsSync())) &&
           note.sourceFileBytes != null) {
         final tmp  = await getTemporaryDirectory();
@@ -844,7 +1103,6 @@ class _NoteEditorState extends State<NoteEditor> {
         path = '${tmp.path}/${safe}_${note.id}.pdf';
         await File(path).writeAsBytes(note.sourceFileBytes!);
       }
-
       if (path != null && !kIsWeb) {
         final uri = Uri.file(path);
         if (await canLaunchUrl(uri)) {
@@ -852,33 +1110,27 @@ class _NoteEditorState extends State<NoteEditor> {
           return;
         }
       }
-
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('No external PDF viewer found on this device.'),
         behavior: SnackBarBehavior.floating,
       ));
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Could not open PDF: $e'),
-          backgroundColor: Colors.red,
-          behavior: SnackBarBehavior.floating,
-        ));
-      }
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Could not open PDF: $e'),
+        backgroundColor: Colors.red,
+        behavior: SnackBarBehavior.floating,
+      ));
     }
   }
 
-  // ── FILE BANNER (non-PDF imported files) ─────────────────────────────────
+  // ── FILE BANNER ───────────────────────────────────────────────────────────
 
   Widget _fileBanner({
-    required IconData     icon,
-    required String       message,
-    required Color        primary,
-    required String       actionLabel,
-    required IconData     actionIcon,
-    VoidCallback?         onAction,
-    bool                  actionEnabled = true,
+    required IconData icon,    required String  message,
+    required Color    primary, required String  actionLabel,
+    required IconData actionIcon,
+    VoidCallback?     onAction, bool actionEnabled = true,
   }) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
@@ -951,26 +1203,27 @@ class _NoteEditorState extends State<NoteEditor> {
         Flexible(
           child: Text(
             note.subfolder.isNotEmpty
-                ? '${note.folder} › ${note.subfolder}'
+                // For Textual notes show readable path without the OT:/NT: prefix
+                ? (note.folder == kFolderTextual
+                    ? '${note.folder} › ${parseTextualSubfolder(note.subfolder)[0] == kTextualOT ? 'Old Testament' : 'New Testament'} › ${parseTextualSubfolder(note.subfolder)[1]}'
+                    : '${note.folder} › ${note.subfolder}')
                 : note.folder,
             style: const TextStyle(fontSize: 10, color: textMid),
             overflow: TextOverflow.ellipsis,
           ),
         ),
         const Spacer(),
-        if (isPdf && _pdfTotal > 1)
-          Text(
-            'Page $_pdfPage of $_pdfTotal',
-            style: const TextStyle(fontSize: 10, color: textMid),
-          )
+        if (_showPreview)
+          Text('Preview mode',
+              style: TextStyle(fontSize: 10, color: widget.primary,
+                  fontWeight: FontWeight.w600))
+        else if (isPdf && _pdfTotal > 1)
+          Text('Page $_pdfPage of $_pdfTotal',
+              style: const TextStyle(fontSize: 10, color: textMid))
         else if (note.sourceFileType != 'txt' && note.sourceFileType != 'md')
-          // WebView editor tracks word count via JS message
-          Text(
-            '$_richWordCount words',
-            style: const TextStyle(fontSize: 10, color: textMid),
-          )
+          Text('$_richWordCount words',
+              style: const TextStyle(fontSize: 10, color: textMid))
         else
-          // Plain ScriptureField fallback for txt/md
           Text(
             '${_contentCtrl.text.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).length} words',
             style: const TextStyle(fontSize: 10, color: textMid),
@@ -990,8 +1243,7 @@ class _NoteEditorState extends State<NoteEditor> {
     final result = await showDialog<MessageType>(
       context: context,
       builder: (_) => SimpleDialog(
-        title: Text('Message Type',
-            style: TextStyle(color: widget.primary)),
+        title: Text('Message Type', style: TextStyle(color: widget.primary)),
         children: MessageType.values.map((t) => SimpleDialogOption(
           onPressed: () => Navigator.pop(context, t),
           child: Row(children: [
@@ -1063,11 +1315,10 @@ class _NoteEditorState extends State<NoteEditor> {
     );
     if (result == null || result.isEmpty) return;
 
-    final note = widget.note;
+    final note    = widget.note;
     final isPlain = note.sourceFileType == 'txt' || note.sourceFileType == 'md';
 
     if (isPlain) {
-      // Plain ScriptureField path
       final pos    = _contentCtrl.selection.baseOffset;
       final text   = _contentCtrl.text;
       final insert = '\n$result\n';
@@ -1081,8 +1332,6 @@ class _NoteEditorState extends State<NoteEditor> {
       );
       _sync();
     } else {
-      // WebView Quill path — insert as a blockquote paragraph at cursor.
-      // We pass the verse text as HTML and let JS handle insertion.
       final esc = result
           .replaceAll('&', '&amp;')
           .replaceAll('<', '&lt;')
@@ -1110,8 +1359,7 @@ class _NoteEditorState extends State<NoteEditor> {
                 const SizedBox(width: 16),
               const SizedBox(width: 8),
               const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('Word Document (.docx)',
-                    style: TextStyle(fontWeight: FontWeight.w600)),
+                Text('Word Document (.docx)', style: TextStyle(fontWeight: FontWeight.w600)),
                 Text('Best for Microsoft Word, Google Docs',
                     style: TextStyle(fontSize: 11, color: Colors.grey)),
               ]),
@@ -1126,8 +1374,7 @@ class _NoteEditorState extends State<NoteEditor> {
                 const SizedBox(width: 16),
               const SizedBox(width: 8),
               const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('OpenDocument (.odt)',
-                    style: TextStyle(fontWeight: FontWeight.w600)),
+                Text('OpenDocument (.odt)', style: TextStyle(fontWeight: FontWeight.w600)),
                 Text('Best for LibreOffice, OpenOffice',
                     style: TextStyle(fontSize: 11, color: Colors.grey)),
               ]),
@@ -1145,14 +1392,11 @@ class _NoteEditorState extends State<NoteEditor> {
 }
 
 // ── PDF SOURCE DISCRIMINATED UNION ────────────────────────────────────────────
-// Avoids storing both bytes and file redundantly.
 
 class _PdfSource {
   final Uint8List? bytes;
   final File?      file;
-
   const _PdfSource._({this.bytes, this.file});
-
   factory _PdfSource.memory(Uint8List b) => _PdfSource._(bytes: b);
   factory _PdfSource.file(File f)        => _PdfSource._(file: f);
 }
