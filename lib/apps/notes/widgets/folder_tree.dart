@@ -2,7 +2,15 @@
 //
 // Left-hand folder/category navigation panel.
 // To add a new top-level folder: add a constant in note_constants.dart and
-// add a _SimpleFolderTile entry in _FolderTreeState.build().
+// add an entry in _FolderTreeState.build().
+//
+// CHANGES (this revision)
+// ───────────────────────
+// • Added "Textual" folder between Expositional and General.
+//   Textual notes use a two-level subfolder encoding: "OT:Genesis" / "NT:Romans".
+//   The tree shows two static sub-headers (Old Testament / New Testament) that
+//   each expand to show only the books that already have notes, plus an
+//   "Add book…" button identical to the Expositional one.
 
 import 'package:flutter/material.dart';
 import '../../../theme.dart';
@@ -32,7 +40,16 @@ class FolderTree extends StatefulWidget {
 }
 
 class _FolderTreeState extends State<FolderTree> {
-  final Set<String> _expanded = {kFolderTopical, kFolderExpositional};
+  final Set<String> _expanded = {
+    kFolderTopical,
+    kFolderExpositional,
+    kFolderTextual,
+  };
+
+  // Track which Textual testament sub-sections are expanded
+  final Set<String> _textualExpanded = {kTextualOT, kTextualNT};
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
 
   int _count(String folder, [String sub = '']) =>
       widget.notes.where((n) {
@@ -43,6 +60,7 @@ class _FolderTreeState extends State<FolderTree> {
         return true;
       }).length;
 
+  // For Expositional: subfolder is just the book name.
   List<String> get _expositionalBooks => widget.notes
       .where((n) => n.folder == kFolderExpositional && !n.isArchived)
       .map((n) => n.subfolder)
@@ -51,13 +69,35 @@ class _FolderTreeState extends State<FolderTree> {
       .toList()
     ..sort();
 
-  void _toggle(String folder) => setState(() {
-    if (_expanded.contains(folder)) {
-      _expanded.remove(folder);
+  // For Textual: subfolder is "OT:BookName" or "NT:BookName".
+  // Returns sorted book names for a given testament.
+  List<String> _textualBooks(String testament) => widget.notes
+      .where((n) =>
+          n.folder == kFolderTextual &&
+          !n.isArchived &&
+          n.subfolder.startsWith('$testament:'))
+      .map((n) => parseTextualSubfolder(n.subfolder)[1])
+      .toSet()
+      .toList()
+    ..sort();
+
+  void _toggle(String key) => setState(() {
+    if (_expanded.contains(key)) {
+      _expanded.remove(key);
     } else {
-      _expanded.add(folder);
+      _expanded.add(key);
     }
   });
+
+  void _toggleTextual(String testament) => setState(() {
+    if (_textualExpanded.contains(testament)) {
+      _textualExpanded.remove(testament);
+    } else {
+      _textualExpanded.add(testament);
+    }
+  });
+
+  // ── BUILD ──────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -125,6 +165,84 @@ class _FolderTreeState extends State<FolderTree> {
                 ),
               ],
 
+              // ── Textual ────────────────────────────────────────────────────
+              _FolderHeader(
+                label:    'Textual',
+                icon:     Icons.format_quote_outlined,
+                count:    _count(kFolderTextual),
+                expanded: _expanded.contains(kFolderTextual),
+                selected: widget.activeFolder == kFolderTextual &&
+                    widget.activeSubfolder.isEmpty,
+                primary:  widget.primary,
+                onTap: () {
+                  _toggle(kFolderTextual);
+                  widget.onSelectFolder(kFolderTextual, '');
+                },
+              ),
+              if (_expanded.contains(kFolderTextual)) ...[
+                // ── Old Testament sub-section ──────────────────────────────
+                _TestamentHeader(
+                  label:    'Old Testament',
+                  expanded: _textualExpanded.contains(kTextualOT),
+                  primary:  widget.primary,
+                  onTap:    () => _toggleTextual(kTextualOT),
+                ),
+                if (_textualExpanded.contains(kTextualOT)) ...[
+                  ..._textualBooks(kTextualOT).map((book) {
+                    final sub = textualSubfolder(kTextualOT, book);
+                    return _SubfolderTile(
+                      label:    book,
+                      count:    _count(kFolderTextual, sub),
+                      selected: widget.activeFolder == kFolderTextual &&
+                          widget.activeSubfolder == sub,
+                      primary:  widget.primary,
+                      indent:   56, // deeper indent under testament header
+                      onTap:    () =>
+                          widget.onSelectFolder(kFolderTextual, sub),
+                    );
+                  }),
+                  _AddBookButton(
+                    primary:  widget.primary,
+                    indent:   56,
+                    testament: kTextualOT,
+                    bookList: booksOT,
+                    onAdd:    (book) => widget.onSelectFolder(
+                        kFolderTextual, textualSubfolder(kTextualOT, book)),
+                  ),
+                ],
+
+                // ── New Testament sub-section ──────────────────────────────
+                _TestamentHeader(
+                  label:    'New Testament',
+                  expanded: _textualExpanded.contains(kTextualNT),
+                  primary:  widget.primary,
+                  onTap:    () => _toggleTextual(kTextualNT),
+                ),
+                if (_textualExpanded.contains(kTextualNT)) ...[
+                  ..._textualBooks(kTextualNT).map((book) {
+                    final sub = textualSubfolder(kTextualNT, book);
+                    return _SubfolderTile(
+                      label:    book,
+                      count:    _count(kFolderTextual, sub),
+                      selected: widget.activeFolder == kFolderTextual &&
+                          widget.activeSubfolder == sub,
+                      primary:  widget.primary,
+                      indent:   56,
+                      onTap:    () =>
+                          widget.onSelectFolder(kFolderTextual, sub),
+                    );
+                  }),
+                  _AddBookButton(
+                    primary:  widget.primary,
+                    indent:   56,
+                    testament: kTextualNT,
+                    bookList: booksNT,
+                    onAdd:    (book) => widget.onSelectFolder(
+                        kFolderTextual, textualSubfolder(kTextualNT, book)),
+                  ),
+                ],
+              ],
+
               const SizedBox(height: 4),
               const Divider(height: 1, indent: 12, endIndent: 12),
               const SizedBox(height: 4),
@@ -163,6 +281,48 @@ class _FolderTreeState extends State<FolderTree> {
       ]),
     );
   }
+}
+
+// ── TESTAMENT SECTION HEADER ──────────────────────────────────────────────────
+// Second-level collapsible row: "Old Testament" / "New Testament"
+
+class _TestamentHeader extends StatelessWidget {
+  final String       label;
+  final bool         expanded;
+  final Color        primary;
+  final VoidCallback onTap;
+
+  const _TestamentHeader({
+    required this.label,
+    required this.expanded,
+    required this.primary,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+    onTap: onTap,
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(28, 6, 12, 6),
+      child: Row(children: [
+        Icon(
+          expanded ? Icons.expand_more : Icons.chevron_right,
+          size: 14,
+          color: primary.withValues(alpha: 0.6),
+        ),
+        const SizedBox(width: 4),
+        Icon(Icons.auto_stories_outlined, size: 14,
+            color: primary.withValues(alpha: 0.6)),
+        const SizedBox(width: 6),
+        Text(label,
+            style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+                color: primary.withValues(alpha: 0.75),
+                letterSpacing: 0.3)),
+      ]),
+    ),
+  );
 }
 
 // ── PRIVATE TILE WIDGETS ──────────────────────────────────────────────────────
@@ -205,10 +365,13 @@ class _SubfolderTile extends StatelessWidget {
   final String label; final int count;
   final bool selected; final Color primary;
   final VoidCallback onTap;
+  /// Left padding; defaults to 40 for first-level, pass 56 for textual books.
+  final double indent;
 
   const _SubfolderTile({
     required this.label, required this.count,
     required this.selected, required this.primary, required this.onTap,
+    this.indent = 40,
   });
 
   @override
@@ -216,7 +379,7 @@ class _SubfolderTile extends StatelessWidget {
     onTap: onTap,
     child: Container(
       color: selected ? primary.withValues(alpha: 0.07) : null,
-      padding: const EdgeInsets.fromLTRB(40, 7, 12, 7),
+      padding: EdgeInsets.fromLTRB(indent, 7, 12, 7),
       child: Row(children: [
         Expanded(child: Text(label,
             style: TextStyle(
@@ -290,15 +453,27 @@ class _Badge extends StatelessWidget {
 // ── ADD BOOK BUTTON + DIALOG ──────────────────────────────────────────────────
 
 class _AddBookButton extends StatelessWidget {
-  final Color primary;
+  final Color        primary;
+  final double       indent;
+  /// If provided the picker is restricted to this testament and [bookList].
+  /// If null it shows both OT + NT tabs (original Expositional behaviour).
+  final String?      testament;
+  final List<String>? bookList;
   final ValueChanged<String> onAdd;
-  const _AddBookButton({required this.primary, required this.onAdd});
+
+  const _AddBookButton({
+    required this.primary,
+    required this.onAdd,
+    this.indent    = 40,
+    this.testament,
+    this.bookList,
+  });
 
   @override
   Widget build(BuildContext context) => InkWell(
     onTap: () => _showPicker(context),
     child: Padding(
-      padding: const EdgeInsets.fromLTRB(40, 6, 12, 6),
+      padding: EdgeInsets.fromLTRB(indent, 6, 12, 6),
       child: Row(children: [
         Icon(Icons.add, size: 14, color: primary.withValues(alpha: 0.6)),
         const SizedBox(width: 6),
@@ -309,11 +484,68 @@ class _AddBookButton extends StatelessWidget {
     ),
   );
 
-  void _showPicker(BuildContext context) => showDialog(
-    context: context,
-    builder: (_) => _BookPickerDialog(primary: primary, onSelect: onAdd),
+  void _showPicker(BuildContext context) {
+    if (testament != null && bookList != null) {
+      // Single-testament picker (used inside Textual OT / NT sections)
+      showDialog(
+        context: context,
+        builder: (_) => _SingleTestamentBookPickerDialog(
+          title:    '${testament == kTextualOT ? 'Old' : 'New'} Testament',
+          books:    bookList!,
+          primary:  primary,
+          onSelect: onAdd,
+        ),
+      );
+    } else {
+      // Dual-tab picker (original Expositional behaviour)
+      showDialog(
+        context: context,
+        builder: (_) => _BookPickerDialog(primary: primary, onSelect: onAdd),
+      );
+    }
+  }
+}
+
+// ── SINGLE-TESTAMENT BOOK PICKER ─────────────────────────────────────────────
+
+class _SingleTestamentBookPickerDialog extends StatelessWidget {
+  final String       title;
+  final List<String> books;
+  final Color        primary;
+  final ValueChanged<String> onSelect;
+
+  const _SingleTestamentBookPickerDialog({
+    required this.title,
+    required this.books,
+    required this.primary,
+    required this.onSelect,
+  });
+
+  @override
+  Widget build(BuildContext context) => Dialog(
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+    child: SizedBox(width: 320, height: 440,
+      child: Column(children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          child: Text(title,
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold,
+                  color: primary)),
+        ),
+        const Divider(height: 1),
+        Expanded(child: ListView(
+          children: books.map((b) => ListTile(
+            dense: true,
+            title: Text(b, style: const TextStyle(fontSize: 13)),
+            onTap: () { Navigator.pop(context); onSelect(b); },
+          )).toList(),
+        )),
+      ]),
+    ),
   );
 }
+
+// ── DUAL-TAB BOOK PICKER (Expositional) ──────────────────────────────────────
 
 class _BookPickerDialog extends StatefulWidget {
   final Color primary;

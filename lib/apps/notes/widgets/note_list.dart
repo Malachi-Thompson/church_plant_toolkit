@@ -2,12 +2,44 @@
 //
 // Middle-column note list and individual list tile.
 // Right-click (desktop) or long-press (mobile) opens the context menu.
+//
+// CHANGES (this revision)
+// ───────────────────────
+// • Content preview now strips all HTML tags before display, so notes written
+//   in the Quill rich editor show plain readable text instead of raw markup.
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../../theme.dart';
 import '../note_constants.dart';
 import '../note_model.dart';
+
+// ── HTML STRIP HELPER ─────────────────────────────────────────────────────────
+// Removes all HTML tags and decodes common entities so the list tile shows
+// readable plain text regardless of whether the note content is HTML or plain.
+
+String _stripHtml(String input) {
+  if (input.isEmpty) return input;
+
+  // Remove tags
+  var text = input.replaceAll(RegExp(r'<[^>]*>'), ' ');
+
+  // Decode common HTML entities
+  text = text
+      .replaceAll('&amp;',  '&')
+      .replaceAll('&lt;',   '<')
+      .replaceAll('&gt;',   '>')
+      .replaceAll('&quot;', '"')
+      .replaceAll('&#39;',  "'")
+      .replaceAll('&nbsp;', ' ');
+
+  // Collapse whitespace (newlines + multiple spaces → single space)
+  text = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+
+  return text;
+}
+
+// ── NOTE LIST ─────────────────────────────────────────────────────────────────
 
 class NoteList extends StatelessWidget {
   final List<NoteModel>         notes;
@@ -137,6 +169,9 @@ class _NoteListTile extends StatelessWidget {
         ? DateFormat('MMM d, y').format(note.date!)
         : DateFormat('MMM d').format(note.updatedAt);
 
+    // Strip HTML so the preview always shows readable plain text.
+    final previewText = _stripHtml(note.content);
+
     return GestureDetector(
       onTap: onTap,
       onSecondaryTapUp: (d) => _showContextMenu(context, d.globalPosition),
@@ -159,16 +194,19 @@ class _NoteListTile extends StatelessWidget {
                   maxLines: 1, overflow: TextOverflow.ellipsis),
               const SizedBox(height: 2),
               if (note.subfolder.isNotEmpty)
-                Text(note.subfolder,
-                    style: TextStyle(
-                        fontSize: 10, color: secondary,
-                        fontWeight: FontWeight.w600),
-                    maxLines: 1, overflow: TextOverflow.ellipsis),
+                Text(
+                  // For Textual notes show just the book name (strip "OT:"/"NT:")
+                  note.folder == kFolderTextual
+                      ? parseTextualSubfolder(note.subfolder)[1]
+                      : note.subfolder,
+                  style: TextStyle(
+                      fontSize: 10, color: secondary,
+                      fontWeight: FontWeight.w600),
+                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                ),
               const SizedBox(height: 2),
               Text(
-                note.content.isEmpty
-                    ? 'No content'
-                    : note.content.replaceAll('\n', ' '),
+                previewText.isEmpty ? 'No content' : previewText,
                 style: const TextStyle(fontSize: 11, color: textMid),
                 maxLines: 2, overflow: TextOverflow.ellipsis,
               ),

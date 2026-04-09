@@ -101,8 +101,19 @@ class AppState extends ChangeNotifier {
     final dir     = await getApplicationDocumentsDirectory();
     final logoDir = Directory('${dir.path}/church_logos');
     if (!await logoDir.exists()) await logoDir.create(recursive: true);
+
+    // Delete the old logo file so stale files don't accumulate
+    final oldPath = _churchProfile?.logoPath ?? '';
+    if (oldPath.isNotEmpty) {
+      try { await File(oldPath).delete(); } catch (_) {}
+    }
+
+    // Use a timestamp in the filename so the path is always unique.
+    // This guarantees didUpdateWidget fires in ChurchLogo and ValueKey
+    // changes on every Image.file — forcing a fresh decode from disk.
     final ext  = sourcePath.split('.').last.toLowerCase();
-    final dest = File('${logoDir.path}/church_logo.$ext');
+    final ts   = DateTime.now().millisecondsSinceEpoch;
+    final dest = File('${logoDir.path}/church_logo_$ts.$ext');
     await File(sourcePath).copy(dest.path);
     return dest.path;
   }

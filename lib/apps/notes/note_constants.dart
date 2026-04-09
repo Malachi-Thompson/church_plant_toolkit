@@ -8,6 +8,7 @@
 
 const kFolderTopical      = 'Topical';
 const kFolderExpositional = 'Expositional';
+const kFolderTextual      = 'Textual';   // ← NEW: verse-by-verse / textual sermons
 const kFolderGeneral      = 'General';
 const kFolderPrayer       = 'Prayer';
 const kFolderMeeting      = 'Meeting';
@@ -59,3 +60,22 @@ const booksNT = <String>[
   '2 Thessalonians','1 Timothy','2 Timothy','Titus','Philemon','Hebrews',
   'James','1 Peter','2 Peter','1 John','2 John','3 John','Jude','Revelation',
 ];
+
+// ── TEXTUAL TESTAMENT KEYS ────────────────────────────────────────────────────
+// Used as the subfolder prefix for Textual notes so the tree can split them
+// into OT / NT sections.  A note's subfolder is stored as "OT:Genesis" or
+// "NT:Romans" so we can reconstruct both the testament group and the book.
+
+const kTextualOT = 'OT';
+const kTextualNT = 'NT';
+
+/// Encode a testament key + book name into the subfolder string.
+String textualSubfolder(String testament, String book) => '$testament:$book';
+
+/// Decode a textual subfolder into its [testament, book] parts.
+/// Returns ['', ''] if the value is not in the expected format.
+List<String> parseTextualSubfolder(String subfolder) {
+  final idx = subfolder.indexOf(':');
+  if (idx < 1) return ['', subfolder];
+  return [subfolder.substring(0, idx), subfolder.substring(idx + 1)];
+}

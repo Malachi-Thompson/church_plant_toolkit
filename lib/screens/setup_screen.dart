@@ -1,5 +1,8 @@
 // lib/screens/setup_screen.dart
 import 'dart:io';
+import 'dart:math' as math;
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
@@ -41,6 +44,8 @@ class _SetupScreenState extends State<SetupScreen> {
   Color  _secondaryColor = accentColor;
   String _logoPath       = '';
   String _existingLogoPath = '';
+  List<Color> _extractedColors = []; // colors pulled from logo
+  bool _extractingColors = false;
 
   // Bible translation
   String _bibleTranslationId = 'BSB';
@@ -92,7 +97,105 @@ class _SetupScreenState extends State<SetupScreen> {
     final picker = ImagePicker();
     final picked = await picker.pickImage(
         source: ImageSource.gallery, maxWidth: 512, maxHeight: 512);
-    if (picked != null) setState(() => _logoPath = picked.path);
+    if (picked == null) return;
+
+    // Evict any cached image for the old path AND the new path so Flutter
+    // always loads the freshly picked file rather than a stale cache entry.
+    if (_logoPath.isNotEmpty) {
+      await FileImage(File(_logoPath)).evict();
+    }
+    await FileImage(File(picked.path)).evict();
+
+    setState(() {
+      _logoPath         = picked.path;
+      _extractingColors = true;
+      _extractedColors  = [];
+    });
+    final colors = await _extractColorsFromFile(picked.path);
+    if (mounted) {
+      setState(() {
+        _extractedColors  = colors;
+        _extractingColors = false;
+        if (colors.length >= 2) {
+          _primaryColor   = colors[0];
+          _secondaryColor = colors[1];
+        } else if (colors.length == 1) {
+          _primaryColor = colors[0];
+        }
+      });
+    }
+  }
+
+  /// Decodes the image file, samples a grid of pixels, clusters them by
+  /// perceptual similarity, and returns up to 6 dominant colors sorted by
+  /// saturation×brightness (most vivid first), skipping near-white/black.
+  static Future<List<Color>> _extractColorsFromFile(String path) async {
+    try {
+      final bytes = await File(path).readAsBytes();
+      final codec = await ui.instantiateImageCodec(
+          bytes, targetWidth: 64, targetHeight: 64);
+      final frame     = await codec.getNextFrame();
+      final byteData  = await frame.image.toByteData(
+          format: ui.ImageByteFormat.rawRgba);
+      frame.image.dispose();
+      if (byteData == null) return [];
+
+      final pixels = byteData.buffer.asUint8List();
+      final Map<int, int> buckets = {};
+
+      // Sample every 4th pixel, quantise to 4-bit per channel buckets
+      for (var i = 0; i < pixels.length; i += 16) {
+        final r = pixels[i]     >> 4;
+        final g = pixels[i + 1] >> 4;
+        final b = pixels[i + 2] >> 4;
+        final a = pixels[i + 3];
+        if (a < 128) continue; // skip transparent
+        final key = (r << 8) | (g << 4) | b;
+        buckets[key] = (buckets[key] ?? 0) + 1;
+      }
+
+      // Sort by frequency descending
+      final sorted = buckets.entries.toList()
+        ..sort((a, b) => b.value.compareTo(a.value));
+
+      final List<Color> candidates = [];
+      for (final entry in sorted) {
+        final key = entry.key;
+        final r = ((key >> 8) & 0xF) * 17;
+        final g = ((key >> 4) & 0xF) * 17;
+        final b = (key & 0xF) * 17;
+        final color = Color.fromARGB(255, r, g, b);
+        final hsv   = HSVColor.fromColor(color);
+
+        // Skip near-white (high value, low saturation) and near-black
+        if (hsv.value > 0.92 && hsv.saturation < 0.15) continue;
+        if (hsv.value < 0.10) continue;
+
+        // Skip if too similar to an already-accepted color
+        bool tooClose = candidates.any((c) {
+          final ch = HSVColor.fromColor(c);
+          return (ch.hue - hsv.hue).abs() < 25 &&
+                 (ch.saturation - hsv.saturation).abs() < 0.25 &&
+                 (ch.value - hsv.value).abs() < 0.25;
+        });
+        if (tooClose) continue;
+
+        candidates.add(color);
+        if (candidates.length >= 6) break;
+      }
+
+      // Sort by saturation * value so vivid colors come first
+      candidates.sort((a, b) {
+        final ha = HSVColor.fromColor(a);
+        final hb = HSVColor.fromColor(b);
+        return (hb.saturation * hb.value)
+            .compareTo(ha.saturation * ha.value);
+      });
+
+      return candidates;
+    } catch (_) {
+      return [];
+    }
   }
 
   Future<void> _save() async {
@@ -199,10 +302,13 @@ class _SetupScreenState extends State<SetupScreen> {
               primaryColor:    _primaryColor,
               secondaryColor:  _secondaryColor,
               logoPath:  _logoPath.isNotEmpty ? _logoPath : _existingLogoPath,
+              extractedColors:  _extractedColors,
+              extractingColors: _extractingColors,
               onPickLogo: _pickLogo,
               onRemoveLogo: () => setState(() {
                 _logoPath = '';
                 _existingLogoPath = '';
+                _extractedColors  = [];
               }),
               onPickPrimary: () async {
                 final c = await _showColorPicker(
@@ -214,6 +320,10 @@ class _SetupScreenState extends State<SetupScreen> {
                     context, _secondaryColor, 'Secondary / Accent Color');
                 if (c != null) setState(() => _secondaryColor = c);
               },
+              onExtractedColorTap: (color, isPrimary) => setState(() {
+                if (isPrimary) _primaryColor = color;
+                else           _secondaryColor = color;
+              }),
             ),
 
             // ── BIBLE TRANSLATION ─────────────────────────────────────────
@@ -647,128 +757,179 @@ class _ColorPickerDialog extends StatefulWidget {
   final Color initial;
   final String title;
   const _ColorPickerDialog({required this.initial, required this.title});
-
   @override
   State<_ColorPickerDialog> createState() => _ColorPickerDialogState();
 }
 
 class _ColorPickerDialogState extends State<_ColorPickerDialog> {
-  late Color _selected;
+  late HSVColor _hsv;
   late TextEditingController _hexCtrl;
 
+  // Preset palette rows
   static const _palette = [
+    // Blues / navies
     Color(0xFF0D1B2A), Color(0xFF1A3A5C), Color(0xFF1565C0),
     Color(0xFF1976D2), Color(0xFF0288D1), Color(0xFF0097A7),
+    // Purples
     Color(0xFF4A1A7C), Color(0xFF6A1B9A), Color(0xFF7B1FA2),
     Color(0xFF9C27B0), Color(0xFF673AB7), Color(0xFF3F51B5),
+    // Greens
     Color(0xFF1B4332), Color(0xFF2E7D32), Color(0xFF388E3C),
     Color(0xFF43A047), Color(0xFF00796B), Color(0xFF00897B),
+    // Reds / pinks
     Color(0xFF7B0000), Color(0xFFB71C1C), Color(0xFFC62828),
     Color(0xFFD32F2F), Color(0xFFAD1457), Color(0xFF880E4F),
+    // Golds / oranges
     Color(0xFF6D4C00), Color(0xFFF57F17), Color(0xFFF9A825),
     Color(0xFFD4A843), Color(0xFFFF8F00), Color(0xFFE65100),
+    // Neutrals
     Color(0xFF212121), Color(0xFF424242), Color(0xFF616161),
     Color(0xFF757575), Color(0xFF9E9E9E), Color(0xFFBDBDBD),
-    Color(0xFFFFFFFF), Color(0xFFFFFDE7), Color(0xFFF5F5F5),
   ];
 
   @override
   void initState() {
     super.initState();
-    _selected = widget.initial;
-    _hexCtrl  = TextEditingController(text: _colorToHex(widget.initial));
+    _hsv    = HSVColor.fromColor(widget.initial);
+    _hexCtrl = TextEditingController(text: _toHex(widget.initial));
   }
 
   @override
   void dispose() { _hexCtrl.dispose(); super.dispose(); }
 
-  String _colorToHex(Color c) {
-    final hex = c.toARGB32().toRadixString(16).toUpperCase();
-    return '#${hex.substring(2)}';
+  String _toHex(Color c) {
+    final v = c.toARGB32();
+    return '#${(v & 0xFFFFFF).toRadixString(16).padLeft(6, '0').toUpperCase()}';
   }
 
-  Color? _hexToColor(String hex) {
-    final clean = hex.replaceAll('#', '');
-    if (clean.length == 6) {
-      return Color(int.parse('FF$clean', radix: 16));
-    }
-    return null;
+  Color? _fromHex(String s) {
+    final clean = s.replaceAll('#', '');
+    if (clean.length != 6) return null;
+    try { return Color(int.parse('FF$clean', radix: 16)); } catch (_) { return null; }
+  }
+
+  void _setColor(Color c) {
+    _hsv = HSVColor.fromColor(c);
+    _hexCtrl.text = _toHex(c);
   }
 
   @override
   Widget build(BuildContext context) {
+    final current = _hsv.toColor();
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      child: Padding(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+      child: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Title + preview strip
             Text(widget.title,
                 style: const TextStyle(
                     fontSize: 18, fontWeight: FontWeight.bold, color: textDark)),
-            const SizedBox(height: 20),
+            const SizedBox(height: 14),
             Container(
-              height: 56,
+              height: 48,
               decoration: BoxDecoration(
-                color: _selected,
-                borderRadius: BorderRadius.circular(12),
+                color: current,
+                borderRadius: BorderRadius.circular(10),
                 border: Border.all(color: const Color(0xFFDDE1EC)),
               ),
               child: Center(
-                child: Text('Preview',
+                child: Text(_toHex(current),
                     style: TextStyle(
-                        color: contrastOn(_selected),
-                        fontWeight: FontWeight.w600,
-                        fontSize: 15)),
+                        color: contrastOn(current),
+                        fontWeight: FontWeight.bold,
+                        fontFamily: 'monospace',
+                        fontSize: 14)),
               ),
             ),
+            const SizedBox(height: 18),
+
+            // ── HSV GRADIENT PICKER ──────────────────────────────────────
+            // Saturation × Value square
+            _SvSquare(
+              hue: _hsv.hue,
+              saturation: _hsv.saturation,
+              value: _hsv.value,
+              onChanged: (s, v) => setState(() {
+                _hsv = HSVColor.fromAHSV(1, _hsv.hue, s, v);
+                _hexCtrl.text = _toHex(_hsv.toColor());
+              }),
+            ),
+            const SizedBox(height: 12),
+
+            // Hue slider
+            _HueSlider(
+              hue: _hsv.hue,
+              onChanged: (h) => setState(() {
+                _hsv = HSVColor.fromAHSV(1, h, _hsv.saturation, _hsv.value);
+                _hexCtrl.text = _toHex(_hsv.toColor());
+              }),
+            ),
             const SizedBox(height: 16),
+
+            // Hex input
             Row(
               children: [
-                const Text('Hex:', style: TextStyle(color: textMid, fontSize: 13)),
+                Container(
+                  width: 32, height: 32,
+                  decoration: BoxDecoration(
+                    color: current,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: const Color(0xFFDDE1EC)),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                const Text('Hex',
+                    style: TextStyle(color: textMid, fontSize: 13)),
                 const SizedBox(width: 10),
                 Expanded(
                   child: TextField(
                     controller: _hexCtrl,
-                    style: const TextStyle(fontFamily: 'monospace', fontSize: 14),
+                    style: const TextStyle(
+                        fontFamily: 'monospace', fontSize: 14),
                     decoration: InputDecoration(
-                      hintText: '#1A3A5C', isDense: true,
+                      isDense: true,
+                      hintText: '#1A3A5C',
                       contentPadding: const EdgeInsets.symmetric(
                           horizontal: 12, vertical: 10),
                       border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(8)),
                     ),
                     onChanged: (v) {
-                      final c = _hexToColor(v);
-                      if (c != null) setState(() => _selected = c);
+                      final c = _fromHex(v);
+                      if (c != null) setState(() => _hsv = HSVColor.fromColor(c));
                     },
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 16),
-            const Text('Palette',
+            const SizedBox(height: 18),
+
+            // Preset palette
+            const Text('Presets',
                 style: TextStyle(
-                    fontSize: 13, color: textMid, fontWeight: FontWeight.w500)),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: textMid,
+                    letterSpacing: 0.8)),
             const SizedBox(height: 10),
             Wrap(
-              spacing: 8, runSpacing: 8,
+              spacing: 7, runSpacing: 7,
               children: _palette.map((c) {
-                final sel = c.toARGB32() == _selected.toARGB32();
+                final sel = c.toARGB32() == current.toARGB32();
                 return GestureDetector(
-                  onTap: () => setState(() {
-                    _selected  = c;
-                    _hexCtrl.text = _colorToHex(c);
-                  }),
+                  onTap: () => setState(() => _setColor(c)),
                   child: Container(
-                    width: 36, height: 36,
+                    width: 34, height: 34,
                     decoration: BoxDecoration(
                       color: c,
                       shape: BoxShape.circle,
                       border: Border.all(
-                        color: sel ? Colors.black : Colors.grey.shade300,
+                        color: sel ? Colors.black87 : Colors.grey.shade300,
                         width: sel ? 3 : 1,
                       ),
                       boxShadow: sel
@@ -780,7 +941,9 @@ class _ColorPickerDialogState extends State<_ColorPickerDialog> {
                 );
               }).toList(),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 22),
+
+            // Actions
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
@@ -789,10 +952,12 @@ class _ColorPickerDialogState extends State<_ColorPickerDialog> {
                     child: const Text('Cancel')),
                 const SizedBox(width: 8),
                 ElevatedButton(
-                  onPressed: () => Navigator.pop(context, _selected),
+                  onPressed: () => Navigator.pop(context, current),
                   style: ElevatedButton.styleFrom(
-                      backgroundColor: _selected,
-                      foregroundColor: contrastOn(_selected)),
+                      backgroundColor: current,
+                      foregroundColor: contrastOn(current),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8))),
                   child: const Text('Apply'),
                 ),
               ],
@@ -804,24 +969,160 @@ class _ColorPickerDialogState extends State<_ColorPickerDialog> {
   }
 }
 
+// ── HSV SV-SQUARE ─────────────────────────────────────────────────────────────
+class _SvSquare extends StatelessWidget {
+  final double hue, saturation, value;
+  final void Function(double s, double v) onChanged;
+  const _SvSquare({
+    required this.hue, required this.saturation,
+    required this.value, required this.onChanged,
+  });
+
+  void _handle(Offset local, Size size) {
+    final s = (local.dx / size.width).clamp(0.0, 1.0);
+    final v = 1.0 - (local.dy / size.height).clamp(0.0, 1.0);
+    onChanged(s, v);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(builder: (ctx, constraints) {
+      final w = constraints.maxWidth;
+      const h = 180.0;
+      return GestureDetector(
+        onPanUpdate: (d) => _handle(d.localPosition, Size(w, h)),
+        onTapDown:   (d) => _handle(d.localPosition, Size(w, h)),
+        child: SizedBox(
+          width: w, height: h,
+          child: CustomPaint(
+            painter: _SvPainter(hue: hue, saturation: saturation, value: value),
+          ),
+        ),
+      );
+    });
+  }
+}
+
+class _SvPainter extends CustomPainter {
+  final double hue, saturation, value;
+  const _SvPainter({required this.hue, required this.saturation, required this.value});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+
+    // White → hue gradient (left-right = saturation)
+    final hueColor = HSVColor.fromAHSV(1, hue, 1, 1).toColor();
+    canvas.drawRect(rect,
+        Paint()..shader = LinearGradient(
+          colors: [Colors.white, hueColor],
+        ).createShader(rect));
+
+    // Transparent → black gradient (top-bottom = value)
+    canvas.drawRect(rect,
+        Paint()..shader = LinearGradient(
+          begin: Alignment.topCenter, end: Alignment.bottomCenter,
+          colors: [Colors.transparent, Colors.black],
+        ).createShader(rect));
+
+    // Cursor
+    final cx = saturation * size.width;
+    final cy = (1 - value) * size.height;
+    canvas.drawCircle(Offset(cx, cy), 9,
+        Paint()..color = Colors.white..style = PaintingStyle.stroke..strokeWidth = 2.5);
+    canvas.drawCircle(Offset(cx, cy), 7,
+        Paint()..color = Colors.black26..style = PaintingStyle.stroke..strokeWidth = 1);
+  }
+
+  @override
+  bool shouldRepaint(_SvPainter old) =>
+      old.hue != hue || old.saturation != saturation || old.value != value;
+}
+
+// ── HUE SLIDER ───────────────────────────────────────────────────────────────
+class _HueSlider extends StatelessWidget {
+  final double hue;
+  final ValueChanged<double> onChanged;
+  const _HueSlider({required this.hue, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(builder: (ctx, constraints) {
+      final w = constraints.maxWidth;
+      const h = 24.0;
+      return GestureDetector(
+        onPanUpdate: (d) =>
+            onChanged(((d.localPosition.dx / w) * 360).clamp(0.0, 360.0)),
+        onTapDown: (d) =>
+            onChanged(((d.localPosition.dx / w) * 360).clamp(0.0, 360.0)),
+        child: SizedBox(width: w, height: h,
+          child: CustomPaint(
+            painter: _HuePainter(hue: hue),
+          ),
+        ),
+      );
+    });
+  }
+}
+
+class _HuePainter extends CustomPainter {
+  final double hue;
+  const _HuePainter({required this.hue});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rect = Offset.zero & size;
+    final rrect = RRect.fromRectAndRadius(rect, const Radius.circular(12));
+
+    // Rainbow strip
+    canvas.drawRRect(rrect,
+        Paint()..shader = LinearGradient(
+          colors: List.generate(7, (i) =>
+              HSVColor.fromAHSV(1, i * 60.0, 1, 1).toColor()),
+        ).createShader(rect));
+
+    // Thumb
+    final cx = (hue / 360) * size.width;
+    canvas.drawCircle(Offset(cx, size.height / 2), 11,
+        Paint()..color = Colors.white..style = PaintingStyle.fill);
+    canvas.drawCircle(Offset(cx, size.height / 2), 11,
+        Paint()..color = Colors.black26
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.5);
+    canvas.drawCircle(Offset(cx, size.height / 2), 8,
+        Paint()..color = HSVColor.fromAHSV(1, hue, 1, 1).toColor());
+  }
+
+  @override
+  bool shouldRepaint(_HuePainter old) => old.hue != hue;
+}
+
 // ── BRANDING SECTION ──────────────────────────────────────────────────────────
 class _BrandingSection extends StatelessWidget {
   final Color primaryColor;
   final Color secondaryColor;
   final String logoPath;
+  final List<Color> extractedColors;
+  final bool extractingColors;
   final VoidCallback onPickLogo;
   final VoidCallback onRemoveLogo;
   final VoidCallback onPickPrimary;
   final VoidCallback onPickSecondary;
+  /// Called when a user taps an extracted color swatch.
+  /// [isPrimary] = true means assign to primary, false = secondary.
+  final void Function(Color color, bool isPrimary) onExtractedColorTap;
 
   const _BrandingSection({
     required this.primaryColor,
     required this.secondaryColor,
     required this.logoPath,
+    required this.extractedColors,
+    required this.extractingColors,
     required this.onPickLogo,
     required this.onRemoveLogo,
     required this.onPickPrimary,
     required this.onPickSecondary,
+    required this.onExtractedColorTap,
   });
 
   @override
@@ -837,7 +1138,7 @@ class _BrandingSection extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Logo row
+          // ── Logo row ────────────────────────────────────────────────────
           Row(
             children: [
               GestureDetector(
@@ -852,7 +1153,11 @@ class _BrandingSection extends StatelessWidget {
                   ),
                   clipBehavior: Clip.antiAlias,
                   child: logoPath.isNotEmpty
-                      ? Image.file(File(logoPath), fit: BoxFit.cover)
+                      ? Image.file(
+                          File(logoPath),
+                          key: ValueKey(logoPath),
+                          fit: BoxFit.cover,
+                        )
                       : Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
@@ -911,16 +1216,112 @@ class _BrandingSection extends StatelessWidget {
               ),
             ],
           ),
+
+          // ── Extracted colors from logo ──────────────────────────────────
+          if (extractingColors) ...[
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                SizedBox(
+                  width: 14, height: 14,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: primaryColor),
+                ),
+                const SizedBox(width: 8),
+                const Text('Detecting colors from logo…',
+                    style: TextStyle(fontSize: 12, color: textMid)),
+              ],
+            ),
+          ] else if (extractedColors.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Icon(Icons.auto_awesome,
+                    size: 13, color: primaryColor.withValues(alpha: 0.7)),
+                const SizedBox(width: 5),
+                const Text('Colors from your logo — tap to apply',
+                    style: TextStyle(fontSize: 12, color: textMid)),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8, runSpacing: 8,
+              children: extractedColors.map((c) {
+                final isPrimNow   = c.toARGB32() == primaryColor.toARGB32();
+                final isSecondNow = c.toARGB32() == secondaryColor.toARGB32();
+                return GestureDetector(
+                  onTap: () => _showExtractedColorMenu(context, c),
+                  child: Stack(
+                    children: [
+                      Container(
+                        width: 44, height: 44,
+                        decoration: BoxDecoration(
+                          color: c,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: (isPrimNow || isSecondNow)
+                                ? Colors.black87
+                                : Colors.grey.shade300,
+                            width: (isPrimNow || isSecondNow) ? 2.5 : 1,
+                          ),
+                        ),
+                      ),
+                      if (isPrimNow)
+                        Positioned(
+                          right: 2, bottom: 2,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 3, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: Colors.black54,
+                              borderRadius: BorderRadius.circular(3),
+                            ),
+                            child: const Text('P',
+                                style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 8,
+                                    fontWeight: FontWeight.bold)),
+                          ),
+                        )
+                      else if (isSecondNow)
+                        Positioned(
+                          right: 2, bottom: 2,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 3, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: Colors.black54,
+                              borderRadius: BorderRadius.circular(3),
+                            ),
+                            child: const Text('S',
+                                style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 8,
+                                    fontWeight: FontWeight.bold)),
+                          ),
+                        ),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: 4),
+            Text('P = Primary  ·  S = Secondary',
+                style: TextStyle(
+                    fontSize: 10,
+                    color: textMid.withValues(alpha: 0.7))),
+          ],
+
           const SizedBox(height: 16),
           const Divider(height: 1),
           const SizedBox(height: 16),
 
-          // Color pickers
+          // ── Color pickers ───────────────────────────────────────────────
           const Text('Brand Colors',
               style: TextStyle(
                   fontWeight: FontWeight.w600, fontSize: 14, color: textDark)),
           const SizedBox(height: 4),
-          const Text('Applied across all apps.',
+          const Text('Tap a swatch to open the color picker.',
               style: TextStyle(fontSize: 12, color: textMid)),
           const SizedBox(height: 14),
           Row(
@@ -945,6 +1346,7 @@ class _BrandingSection extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 14),
+
           // Live mini-preview
           ClipRRect(
             borderRadius: BorderRadius.circular(10),
@@ -993,6 +1395,70 @@ class _BrandingSection extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Shows a small bottom sheet asking whether to apply as Primary or Secondary.
+  void _showExtractedColorMenu(BuildContext context, Color color) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            Container(
+              width: 40, height: 4,
+              decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(2)),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 20),
+              height: 44,
+              decoration: BoxDecoration(
+                color: color,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.black12),
+              ),
+            ),
+            const SizedBox(height: 16),
+            ListTile(
+              leading: Container(
+                width: 32, height: 32,
+                decoration: BoxDecoration(
+                    color: primaryColor, borderRadius: BorderRadius.circular(8)),
+              ),
+              title: const Text('Set as Primary',
+                  style: TextStyle(fontWeight: FontWeight.w600)),
+              subtitle: const Text('Headers, buttons, banners'),
+              onTap: () {
+                Navigator.pop(context);
+                onExtractedColorTap(color, true);
+              },
+            ),
+            ListTile(
+              leading: Container(
+                width: 32, height: 32,
+                decoration: BoxDecoration(
+                    color: secondaryColor,
+                    borderRadius: BorderRadius.circular(8)),
+              ),
+              title: const Text('Set as Secondary',
+                  style: TextStyle(fontWeight: FontWeight.w600)),
+              subtitle: const Text('Accents, highlights'),
+              onTap: () {
+                Navigator.pop(context);
+                onExtractedColorTap(color, false);
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
       ),
     );
   }
