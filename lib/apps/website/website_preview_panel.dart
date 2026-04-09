@@ -83,10 +83,27 @@ class _WebsitePreviewPanelState extends State<WebsitePreviewPanel> {
   _Device      _device  = _Device.desktop;
   bool         _loading = true;
 
+  // Fingerprint of the last-rendered state.
+  // Because ChurchWebsite is mutable and passed by reference, didUpdateWidget
+  // can't detect in-place mutations (old.site == widget.site always). We track
+  // the relevant settings/page values ourselves and reload when they change.
+  late String _lastFingerprint;
+
+  String _buildFingerprint(WebPage page) {
+    final s = widget.site.settings;
+    final blockSig = page.blocks.map((b) =>
+        '${b.id}:${b.isVisible ? 1 : 0}:${b.heading}:${b.subheading}:${b.body}:'
+        '${b.buttonText}').join('|');
+    return '${s.primaryHex}|${s.secondaryHex}|${s.backgroundHex}|'
+           '${s.textHex}|${s.fontFamily}|${s.siteTitle}|${s.navStyle}|'
+           '${page.id}|$blockSig';
+  }
+
   @override
   void initState() {
     super.initState();
-    _currentPage = widget.initialPage;
+    _currentPage     = widget.initialPage;
+    _lastFingerprint = _buildFingerprint(_currentPage);
     if (_isWindows) {
       _initWindows();
     } else {
@@ -97,8 +114,15 @@ class _WebsitePreviewPanelState extends State<WebsitePreviewPanel> {
   @override
   void didUpdateWidget(WebsitePreviewPanel old) {
     super.didUpdateWidget(old);
-    if (old.site != widget.site || old.initialPage != widget.initialPage) {
+    // If the parent explicitly switched to a different page, follow it.
+    if (old.initialPage.id != widget.initialPage.id) {
       _currentPage = widget.initialPage;
+      _loadPage(_currentPage);
+      return;
+    }
+    // Detect in-place mutations on the shared ChurchWebsite object
+    // (colors, font, block edits, etc.) by comparing the rendered fingerprint.
+    if (_buildFingerprint(_currentPage) != _lastFingerprint) {
       _loadPage(_currentPage);
     }
   }
@@ -141,6 +165,7 @@ class _WebsitePreviewPanelState extends State<WebsitePreviewPanel> {
   // ── Load a page ─────────────────────────────────────────────────────────────
 
   void _loadPage(WebPage page) {
+    _lastFingerprint = _buildFingerprint(page); // snapshot what we're rendering
     final css  = generateCSS(widget.site.settings);
     final html = _inlineCSS(generatePageHtml(widget.site, page), css);
 

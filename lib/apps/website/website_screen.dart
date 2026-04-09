@@ -26,6 +26,7 @@ import 'website_templates.dart';
 import 'website_exporter.dart';
 import 'website_deploy_service.dart';
 import 'website_preview_panel.dart';
+import 'website_canvas_editor.dart';
 
 const _uuid = Uuid();
 String _id() => _uuid.v4();
@@ -266,6 +267,18 @@ class _WebsiteScreenState extends State<WebsiteScreen> {
     final secondary = state.brandSecondary;
     final profile   = state.churchProfile;
 
+    // Sync church profile brand colors into site.settings so that
+    // WebsitePreviewPanel.generateCSS() always reflects the live AppState
+    // colors — even if the user never manually edited the hex in Site Settings.
+    if (_site != null) {
+      final hex1 = '#${primary.value.toRadixString(16).substring(2).toUpperCase()}';
+      final hex2 = '#${secondary.value.toRadixString(16).substring(2).toUpperCase()}';
+      if (_site!.settings.primaryHex != hex1 || _site!.settings.secondaryHex != hex2) {
+        _site!.settings.primaryHex   = hex1;
+        _site!.settings.secondaryHex = hex2;
+      }
+    }
+
     if (_loading) {
       return Scaffold(
           body: Center(child: CircularProgressIndicator(color: primary)));
@@ -333,19 +346,20 @@ class _WebsiteScreenState extends State<WebsiteScreen> {
                     initialPage: _activePage!,
                     primary:     primary,
                   )
-                : _activePage != null
-                    ? _BlockCanvas(
-                        page:          _activePage!,
-                        site:          _site!,
-                        selectedBlock: _selectedBlock,
-                        primary:       primary,
-                        secondary:     secondary,
-                        onSelect:      (b) => setState(() => _selectedBlock = b),
-                        onDelete:      _deleteBlock,
-                        onReorder:     _moveBlock,
-                        onToggleVisibility: (b) => _update(() =>
-                            b.isVisible = !b.isVisible),
-                      )
+                :_activePage != null
+                  ? WebsiteCanvasEditor(
+                  page:          _activePage!,
+                  site:          _site!,
+                  selectedBlock: _selectedBlock,
+                  primary:       primary,
+                  secondary:     secondary,
+                  onSelect:      (b) => setState(() => _selectedBlock = b),
+                  onChanged:     () => _update(() {}),
+                  onDelete:      _deleteBlock,
+                  onReorder:     _moveBlock,
+                  onToggleVisibility: (b) => _update(() => b.isVisible = !b.isVisible),
+                  onAddBlock:    _addBlock,
+                  )
                     : Center(child: Text('Select or create a page',
                         style: TextStyle(color: primary.withValues(alpha: 0.4)))),
           ),
