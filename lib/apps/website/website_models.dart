@@ -284,6 +284,8 @@ class WebsiteSettings {
   String youtubeUrl;
   String twitterUrl;
   String footerText;
+  String footerBgHex;
+  String footerTextHex;
   DeploySettings deploy;
 
   WebsiteSettings({
@@ -302,6 +304,8 @@ class WebsiteSettings {
     this.youtubeUrl       = '',
     this.twitterUrl       = '',
     this.footerText       = '',
+    this.footerBgHex      = '#1C1C2E',
+    this.footerTextHex    = '#FFFFFF',
     DeploySettings? deploy,
   }) : deploy = deploy ?? DeploySettings();
 
@@ -315,6 +319,8 @@ class WebsiteSettings {
     'facebookUrl': facebookUrl, 'instagramUrl': instagramUrl,
     'youtubeUrl': youtubeUrl, 'twitterUrl': twitterUrl,
     'footerText': footerText,
+    'footerBgHex': footerBgHex,
+    'footerTextHex': footerTextHex,
     'deploy': deploy.toJson(),
   };
 
@@ -334,6 +340,8 @@ class WebsiteSettings {
     youtubeUrl:       j['youtubeUrl']       ?? '',
     twitterUrl:       j['twitterUrl']       ?? '',
     footerText:       j['footerText']       ?? '',
+    footerBgHex:      j['footerBgHex']      ?? '#1C1C2E',
+    footerTextHex:    j['footerTextHex']    ?? '#FFFFFF',
     deploy: j['deploy'] != null
         ? DeploySettings.fromJson(j['deploy']) : DeploySettings(),
   );

@@ -17,6 +17,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
 import 'package:path_provider/path_provider.dart';
 import '../../models/app_state.dart';
+import '../../models/church_profile.dart' hide ChurchLogo, AppDefinition, availableApps;
 import '../../screens/dashboard_screen.dart';
 import '../../services/bible_service.dart';
 import '../../theme.dart';
@@ -267,15 +268,27 @@ class _WebsiteScreenState extends State<WebsiteScreen> {
     final secondary = state.brandSecondary;
     final profile   = state.churchProfile;
 
-    // Sync church profile brand colors into site.settings so that
-    // WebsitePreviewPanel.generateCSS() always reflects the live AppState
-    // colors — even if the user never manually edited the hex in Site Settings.
-    if (_site != null) {
-      final hex1 = '#${primary.value.toRadixString(16).substring(2).toUpperCase()}';
-      final hex2 = '#${secondary.value.toRadixString(16).substring(2).toUpperCase()}';
-      if (_site!.settings.primaryHex != hex1 || _site!.settings.secondaryHex != hex2) {
-        _site!.settings.primaryHex   = hex1;
-        _site!.settings.secondaryHex = hex2;
+    // Sync church profile colors directly into site.settings so the preview
+    // always reflects the live profile — use the hex strings directly to
+    // avoid any Color round-trip conversion issues.
+    if (_site != null && profile != null) {
+      _site!.settings.primaryHex   = profile.primaryColorHex;
+      _site!.settings.secondaryHex = profile.secondaryColorHex;
+
+
+      // Auto-fill map block address from profile if not yet set.
+      final profileAddress = [
+        profile.city,
+        if (profile.state.isNotEmpty) profile.state,
+        if (profile.country.isNotEmpty) profile.country,
+      ].where((s) => s.isNotEmpty).join(', ');
+
+      for (final page in _site!.pages) {
+        for (final block in page.blocks) {
+          if (block.type == BlockType.map && block.mapAddress.isEmpty) {
+            block.mapAddress = profileAddress;
+          }
+        }
       }
     }
 
@@ -376,6 +389,7 @@ class _WebsiteScreenState extends State<WebsiteScreen> {
                 secondary:    secondary,
                 bibleService: state.bibleService,
                 onChanged:    () => _update(() {}),
+                profile:      profile,
               ),
             ),
           ],
@@ -870,11 +884,13 @@ class _BlockPropertyPanel extends StatefulWidget {
   final Color         secondary;
   final BibleService  bibleService;
   final VoidCallback  onChanged;
+  final ChurchProfile? profile;
 
   const _BlockPropertyPanel({
     required this.block,       required this.site,
     required this.primary,     required this.secondary,
     required this.bibleService,required this.onChanged,
+    this.profile,
   });
 
   @override
@@ -986,7 +1002,7 @@ class _BlockPropertyPanelState extends State<_BlockPropertyPanel> {
                   onChanged: widget.onChanged),
             if (block.type == BlockType.map)
               _MapProviderPicker(block: block, primary: primary,
-                  onChanged: widget.onChanged),
+                  onChanged: widget.onChanged, profile: widget.profile),
             if (block.type == BlockType.gallery)
               _GalleryEditor(block: block, primary: primary,
                   onChanged: widget.onChanged),
@@ -1283,7 +1299,8 @@ class _TeamMemberRowState extends State<_TeamMemberRow> {
 
 class _MapProviderPicker extends StatefulWidget {
   final WebBlock block; final Color primary; final VoidCallback onChanged;
-  const _MapProviderPicker({required this.block, required this.primary, required this.onChanged});
+  final ChurchProfile? profile;
+  const _MapProviderPicker({required this.block, required this.primary, required this.onChanged, this.profile});
   @override State<_MapProviderPicker> createState() => _MapProviderPickerState();
 }
 class _MapProviderPickerState extends State<_MapProviderPicker> {
@@ -1301,9 +1318,30 @@ class _MapProviderPickerState extends State<_MapProviderPicker> {
     widget.block.mapLng     = double.tryParse(_lngCtrl.text) ?? 0;
     widget.onChanged();
   }
+
+  void _useProfileAddress() {
+    final p = widget.profile;
+    if (p == null) return;
+    final addr = [
+      p.city,
+      if (p.state.isNotEmpty) p.state,
+      if (p.country.isNotEmpty) p.country,
+    ].where((s) => s.isNotEmpty).join(', ');
+    if (addr.isEmpty) return;
+    setState(() => _addrCtrl.text = addr);
+  }
+
   @override void dispose() { _addrCtrl.dispose(); _latCtrl.dispose(); _lngCtrl.dispose(); super.dispose(); }
+
   @override
   Widget build(BuildContext context) {
+    final p = widget.profile;
+    final profileAddress = p == null ? '' : [
+      p.city,
+      if (p.state.isNotEmpty) p.state,
+      if (p.country.isNotEmpty) p.country,
+    ].where((s) => s.isNotEmpty).join(', ');
+
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       const Text('Map Provider', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: textMid)),
       const SizedBox(height: 8),
@@ -1316,10 +1354,41 @@ class _MapProviderPickerState extends State<_MapProviderPicker> {
         onChanged: (v) { if (v != null) { widget.block.mapProvider = v; widget.onChanged(); setState(() {}); } },
       )),
       const SizedBox(height: 8),
-      TextFormField(controller: _addrCtrl,
-          style: const TextStyle(fontSize: 12),
-          decoration: const InputDecoration(labelText: 'Address', isDense: true,
-              contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8))),
+      Row(children: [
+        Expanded(
+          child: TextFormField(controller: _addrCtrl,
+              style: const TextStyle(fontSize: 12),
+              decoration: const InputDecoration(labelText: 'Address', isDense: true,
+                  contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8))),
+        ),
+        if (profileAddress.isNotEmpty && _addrCtrl.text != profileAddress) ...[
+          const SizedBox(width: 6),
+          Tooltip(
+            message: 'Use church address: \$profileAddress',
+            child: InkWell(
+              onTap: _useProfileAddress,
+              borderRadius: BorderRadius.circular(4),
+              child: Padding(
+                padding: const EdgeInsets.all(4),
+                child: Icon(Icons.location_city_outlined,
+                    size: 18, color: widget.primary),
+              ),
+            ),
+          ),
+        ],
+      ]),
+      if (profileAddress.isNotEmpty && _addrCtrl.text.isEmpty)
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: GestureDetector(
+            onTap: _useProfileAddress,
+            child: Text(
+              'Use church address: \$profileAddress',
+              style: TextStyle(fontSize: 11, color: widget.primary,
+                  decoration: TextDecoration.underline),
+            ),
+          ),
+        ),
       const SizedBox(height: 8),
       Row(children: [
         Expanded(child: TextFormField(controller: _latCtrl,
@@ -1579,6 +1648,21 @@ class _SiteSettingsSheetState extends State<_SiteSettingsSheet>
                     label: 'Secondary Color',
                     value: s.secondaryHex,
                     onChanged: (v) { s.secondaryHex = v; widget.onChanged(); setState(() {}); },
+                  ),
+                  const SizedBox(height: 16),
+                  const Text('Footer', style: TextStyle(
+                      fontWeight: FontWeight.w600, fontSize: 13, color: textMid)),
+                  const SizedBox(height: 8),
+                  _ColorHexField(
+                    label: 'Footer Background',
+                    value: s.footerBgHex,
+                    onChanged: (v) { s.footerBgHex = v; widget.onChanged(); setState(() {}); },
+                  ),
+                  const SizedBox(height: 8),
+                  _ColorHexField(
+                    label: 'Footer Text',
+                    value: s.footerTextHex,
+                    onChanged: (v) { s.footerTextHex = v; widget.onChanged(); setState(() {}); },
                   ),
                 ],
               ),

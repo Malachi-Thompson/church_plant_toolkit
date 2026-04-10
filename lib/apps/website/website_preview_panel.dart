@@ -8,6 +8,7 @@
 //
 // The generated CSS is inlined so no disk writes or network calls are needed.
 
+import 'dart:async';
 import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -69,19 +70,32 @@ String _inlineCSS(String html, String css) {
   return html.replaceFirst('</head>', '$style\n</head>');
 }
 
+/// Resolves a page slug to the matching WebPage, or returns null.
+/// The JS click interceptor sends the raw href (e.g. 'about.html' or
+/// 'index.html'), so we strip the extension and match by slug.
+WebPage? _resolvePreviewUrl(String href, ChurchWebsite site) {
+  final slug = href.replaceAll('.html', '').replaceAll('preview://', '');
+  if (slug.isEmpty) return null;
+  return site.pages.firstWhere(
+    (p) => p.slug == slug || (slug == 'index' && p.isHomePage),
+    orElse: () => site.pages.first,
+  );
+}
 // ─── State ────────────────────────────────────────────────────────────────────
 
 class _WebsitePreviewPanelState extends State<WebsitePreviewPanel> {
   // Windows path (webview_windows)
   WebviewController? _winController;
   bool               _winReady = false;
+  final List<StreamSubscription<dynamic>> _winSubscriptions = [];
 
   // Cross-platform path (webview_flutter)
   wf.WebViewController? _wfController;
 
   late WebPage _currentPage;
-  _Device      _device  = _Device.desktop;
-  bool         _loading = true;
+  _Device      _device   = _Device.desktop;
+  bool         _loading  = true;
+  bool         _darkMode = false;
 
   // Fingerprint of the last-rendered state.
   // Because ChurchWebsite is mutable and passed by reference, didUpdateWidget
@@ -129,6 +143,7 @@ class _WebsitePreviewPanelState extends State<WebsitePreviewPanel> {
 
   @override
   void dispose() {
+    for (final s in _winSubscriptions) { s.cancel(); }
     _winController?.dispose();
     super.dispose();
   }
@@ -138,6 +153,31 @@ class _WebsitePreviewPanelState extends State<WebsitePreviewPanel> {
   Future<void> _initWindows() async {
     final c = WebviewController();
     await c.initialize();
+
+    // webview_windows has no onNavigationRequest, so we intercept clicks
+    // via a JS script injected before page parse, sending the href back
+    // to Dart via postMessage before the browser can navigate.
+    await c.addScriptToExecuteOnDocumentCreated(
+      "document.addEventListener('click', function(e) {\n          var el = e.target.closest('a[href]');\n          if (!el) return;\n          var href = el.getAttribute('href');\n          if (!href) return;\n          // Anchor links scroll within the page — let them through.\n          if (href.startsWith('#')) return;\n          // Absolute URLs open externally — don't intercept.\n          if (href.startsWith('http')) return;\n          e.preventDefault();\n          window.chrome.webview.postMessage('navigate:' + href);\n        }, true);",
+    );
+
+    // Receive postMessage events from the injected script
+    _winSubscriptions.add(c.webMessage.listen((msg) {
+      if (msg is! String) return;
+      if (!msg.startsWith('navigate:')) return;
+      final href = msg.substring('navigate:'.length);
+      final target = _resolvePreviewUrl(href, widget.site);
+      if (target == null || target.id == _currentPage.id || !mounted) return;
+      setState(() => _currentPage = target);
+      _loadPage(target);
+    }));
+
+    // Track loading state from the stream
+    _winSubscriptions.add(c.loadingState.listen((state) {
+      if (!mounted) return;
+      setState(() => _loading = state == LoadingState.loading);
+    }));
+
     if (!mounted) return;
     setState(() {
       _winController = c;
@@ -155,7 +195,12 @@ class _WebsitePreviewPanelState extends State<WebsitePreviewPanel> {
         onPageStarted:  (_) => setState(() => _loading = true),
         onPageFinished: (_) => setState(() => _loading = false),
         onNavigationRequest: (req) {
-          _handleCrossPageLink(req.url);
+          final url = req.url;
+          // Allow the initial data: load through; intercept everything else.
+          if (url.startsWith('data:') || url.startsWith('about:')) {
+            return wf.NavigationDecision.navigate;
+          }
+          _handleCrossPageLink(url);
           return wf.NavigationDecision.prevent;
         },
       ));
@@ -171,33 +216,55 @@ class _WebsitePreviewPanelState extends State<WebsitePreviewPanel> {
 
     if (_isWindows) {
       if (_winReady && _winController != null) {
-        setState(() => _loading = true);
-        _winController!.loadStringContent(html).then((_) {
-          if (mounted) setState(() => _loading = false);
-        });
+        // Loading state is driven by the loadingState stream set up in _initWindows
+        _winController!.loadStringContent(html);
       }
       // If not yet initialised, _initWindows() will call _loadPage once done.
     } else {
       setState(() => _loading = true);
       _wfController?.loadHtmlString(html).then((_) {
         if (mounted) setState(() => _loading = false);
+        // Re-apply dark mode after page load
+        if (_darkMode) _applyDarkMode(true);
       });
+    }
+  }
+
+  // ── Dark mode toggle ─────────────────────────────────────────────────────
+
+  void _toggleDarkMode() {
+    setState(() => _darkMode = !_darkMode);
+    _applyDarkMode(_darkMode);
+  }
+
+  void _applyDarkMode(bool dark) {
+    final js = dark
+        ? "document.documentElement.classList.add('dark-preview');"
+        : "document.documentElement.classList.remove('dark-preview');"
+    ;
+    if (_isWindows) {
+      _winController?.executeScript(js);
+    } else {
+      _wfController?.runJavaScript(js);
     }
   }
 
   // ── Inter-page link handling (webview_flutter only) ─────────────────────────
 
   void _handleCrossPageLink(String url) {
-    if (url.startsWith('data:') || url.startsWith('#')) return;
-    final slug = url.split('/').last.replaceAll('.html', '');
-    final target = widget.site.pages.firstWhere(
-      (p) => p.slug == slug || (slug == 'index' && p.isHomePage),
-      orElse: () => _currentPage,
-    );
-    if (target.id != _currentPage.id) {
-      setState(() => _currentPage = target);
-      _loadPage(target);
-    }
+    // Ignore non-navigation URLs
+    if (url.startsWith('data:') || url.startsWith('about:')) return;
+    if (url.startsWith('#')) return;
+    // External links — ignore
+    if (url.startsWith('http') && !url.contains('.html')) return;
+
+    // Extract just the filename part from a full URL like
+    // 'data:text/html,...' or a path like '/about.html'
+    final href = url.split('/').last;
+    final target = _resolvePreviewUrl(href, widget.site);
+    if (target == null || target.id == _currentPage.id) return;
+    setState(() => _currentPage = target);
+    _loadPage(target);
   }
 
   // ── Device switcher button ──────────────────────────────────────────────────
@@ -254,6 +321,7 @@ class _WebsitePreviewPanelState extends State<WebsitePreviewPanel> {
         site:        widget.site,
         currentPage: _currentPage,
         primary:     widget.primary,
+        darkMode:    _darkMode,
         deviceButtons: Row(
           mainAxisSize: MainAxisSize.min,
           children: _Device.values.map(_deviceBtn).toList(),
@@ -262,7 +330,8 @@ class _WebsitePreviewPanelState extends State<WebsitePreviewPanel> {
           setState(() => _currentPage = p);
           _loadPage(p);
         },
-        onRefresh: () => _loadPage(_currentPage),
+        onRefresh:       () => _loadPage(_currentPage),
+        onToggleDark:    _toggleDarkMode,
       ),
 
       // ── Frame ─────────────────────────────────────────────────────────────
@@ -320,11 +389,14 @@ class _PreviewToolbar extends StatelessWidget {
   final Widget                deviceButtons;
   final ValueChanged<WebPage> onSelectPage;
   final VoidCallback          onRefresh;
+  final VoidCallback          onToggleDark;
+  final bool                  darkMode;
 
   const _PreviewToolbar({
-    required this.site,         required this.currentPage,
-    required this.primary,      required this.deviceButtons,
-    required this.onSelectPage, required this.onRefresh,
+    required this.site,          required this.currentPage,
+    required this.primary,       required this.deviceButtons,
+    required this.onSelectPage,  required this.onRefresh,
+    required this.onToggleDark,  required this.darkMode,
   });
 
   @override
@@ -375,6 +447,33 @@ class _PreviewToolbar extends StatelessWidget {
             margin: const EdgeInsets.symmetric(horizontal: 8)),
         deviceButtons,
         const SizedBox(width: 8),
+        Tooltip(
+          message: darkMode ? 'Switch to light mode' : 'Switch to dark mode',
+          child: InkWell(
+            borderRadius: BorderRadius.circular(6),
+            onTap: onToggleDark,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              decoration: BoxDecoration(
+                color: darkMode
+                    ? primary.withValues(alpha: 0.12)
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                  color: darkMode ? primary : Colors.transparent,
+                  width: 1.5,
+                ),
+              ),
+              child: Icon(
+                darkMode ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
+                size: 18,
+                color: darkMode ? primary : Colors.grey.shade500,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 4),
         Tooltip(
           message: 'Refresh preview',
           child: InkWell(

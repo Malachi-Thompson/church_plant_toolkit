@@ -169,7 +169,21 @@ String _generateCSS(WebsiteSettings s) => '''
   --font-head:  '${s.fontFamily}', serif;
   --font-body:  'Inter', sans-serif;
   --max-w:      1100px;
+  --footer-bg:  ${s.footerBgHex};
+  --footer-text: ${s.footerTextHex};
 }
+
+/* DARK MODE */
+html.dark-preview {
+  --bg:         #111827;
+  --text:       #F3F4F6;
+  --text-muted: #9CA3AF;
+  --border:     #374151;
+}
+html.dark-preview section.alt { background: #1F2937; }
+html.dark-preview .service-card,
+html.dark-preview .event-card { background: #1F2937; border-color: #374151; }
+html.dark-preview .about-img { filter: brightness(0.85); }
 
 body { font-family: var(--font-body); background: var(--bg); color: var(--text); line-height: 1.65; }
 a { color: var(--primary); text-decoration: none; }
@@ -279,7 +293,8 @@ section.dark h2, section.dark p { color: #fff; }
 .sermon-points p { display: flex; gap: 10px; margin-bottom: 8px; }
 
 /* FOOTER */
-footer { background: #1C1C2E; color: rgba(255,255,255,0.6); text-align: center; padding: 32px 24px; font-size: 0.9rem; }
+footer { background: var(--footer-bg); color: var(--footer-text); text-align: center; padding: 32px 24px; font-size: 0.9rem; opacity: 1; }
+footer a { color: var(--footer-text); }
 .footer-social { display: flex; justify-content: center; gap: 16px; margin-bottom: 16px; font-size: 1.4rem; }
 .footer-social a { text-decoration: none; }
 
